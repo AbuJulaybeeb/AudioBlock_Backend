@@ -7,7 +7,8 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from 'typeor
  *
  * This does NOT store raw song audio, lyrics, or files — only the generated
  * output (a description string or a result image URI) and enough metadata
- * to track and notify completion of the async job that produced it.
+ * to track and notify completion of the async job that produced it. Lyric
+ * transcriptions (issue #285) are written to the Song itself, never here.
  */
 @Entity('ai_generation_records')
 export class AiGenerationRecord {
@@ -22,7 +23,7 @@ export class AiGenerationRecord {
 
   /** Which AI feature produced this record — matches `AiFeature` in aiFeatureFlags.ts. */
   @Column()
-  feature!: 'coverArt' | 'descriptions';
+  feature!: 'coverArt' | 'descriptions' | 'lyricsTranscription';
 
   @Column({ default: 'pending' })
   status!: 'pending' | 'completed' | 'failed';

@@ -16,6 +16,7 @@ router.use(requireAiStudioEnabled);
 router.get('/overview', controller.getOverview);
 router.post('/songs/:songId/cover-art', controller.requestCoverArt);
 router.post('/songs/:songId/description', controller.requestDescription);
+router.post('/songs/:songId/lyrics-transcription', controller.requestLyricsTranscription);
 router.post('/suggest-tags', controller.suggestTags);
 router.post('/tweet-draft', controller.createTweetDraft);
 

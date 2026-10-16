@@ -129,6 +129,25 @@ export class Song {
   @Column({ type: 'text', nullable: true })
   aiGeneratedCoverUrl?: string | null;
 
+  /**
+   * Issue #285: AI lyric transcription draft. Kept separate from `lyrics` so
+   * a transcription never overwrites lyrics the artist entered themselves.
+   */
+  @Column({ type: 'text', nullable: true })
+  aiLyricsTranscription?: string | null;
+
+  /** Issue #285: When the artist confirmed they hold the rights to transcribe these lyrics. */
+  @Column({ type: 'timestamp', nullable: true })
+  lyricsRightsConfirmedAt?: Date | null;
+
+  /** Issue #285: User who confirmed the lyric rights. */
+  @Column({ type: 'varchar', nullable: true })
+  lyricsRightsConfirmedBy?: string | null;
+
+  /** Issue #285: When the current transcription draft was produced. */
+  @Column({ type: 'timestamp', nullable: true })
+  aiLyricsTranscribedAt?: Date | null;
+
   /** Issue #272: Acoustic audio fingerprint for duplicate/plagiarism detection */
   @Column({ type: 'text', nullable: true })
   fingerprint?: string | null;

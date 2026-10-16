@@ -75,6 +75,23 @@ export interface EmbeddingResult {
   provider: string;
 }
 
+/** Issue #285: Lyric transcription input. Only sent once the artist confirmed they hold the rights. */
+export interface LyricsTranscriptionInput {
+  songId: string;
+  title: string;
+  /** Location of the song's audio (S3 original or HLS master). */
+  audioUrl: string;
+  /** Optional BCP-47 language hint, e.g. `en`. */
+  language?: string;
+}
+
+/** Issue #285: Lyric transcription result. An empty `lyrics` string means nothing was transcribed. */
+export interface LyricsTranscriptionResult {
+  lyrics: string;
+  language?: string;
+  provider: string;
+}
+
 export interface AiProvider {
   /** Identifies the concrete provider in logs and stored generation records. */
   readonly name: string;
@@ -90,4 +107,7 @@ export interface AiProvider {
 
   /** Issue #274: Generate embeddings for semantic search */
   embed(input: EmbeddingInput): Promise<EmbeddingResult>;
+
+  /** Issue #285: Transcribe a song's lyrics from its audio (rights-confirmed songs only) */
+  transcribeLyrics(input: LyricsTranscriptionInput): Promise<LyricsTranscriptionResult>;
 }

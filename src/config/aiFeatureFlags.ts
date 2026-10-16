@@ -18,7 +18,8 @@ export type AiFeature =
   | 'moderationTriage'
   | 'search'
   | 'playlists'
-  | 'tweetDrafts';
+  | 'tweetDrafts'
+  | 'lyricsTranscription';
 
 const FEATURE_ENV_VAR: Record<AiFeature, string> = {
   tags: 'AI_FEATURE_TAGS_ENABLED',
@@ -28,6 +29,7 @@ const FEATURE_ENV_VAR: Record<AiFeature, string> = {
   search: 'AI_FEATURE_SEARCH_ENABLED',
   playlists: 'AI_FEATURE_PLAYLISTS_ENABLED',
   tweetDrafts: 'AI_FEATURE_TWEET_DRAFTS_ENABLED',
+  lyricsTranscription: 'AI_FEATURE_LYRICS_TRANSCRIPTION_ENABLED',
 };
 
 /** Whether `feature` is enabled. Checked at each AI call site. */
