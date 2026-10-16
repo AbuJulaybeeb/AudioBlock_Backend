@@ -127,6 +127,9 @@ router.get(
   AdminController.getIndexerStatus,
 );
 
+// Platform-wide AI feature usage by feature and artist (Issue #289) — admins only.
+router.get('/ai/usage', requirePermission(Permission.AI_USAGE_VIEW), AdminController.getAiUsage);
+
 // Privy linked accounts (Issue #632) — admins only.
 router.get(
   '/users/:id/linked-accounts',

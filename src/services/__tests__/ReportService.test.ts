@@ -33,6 +33,7 @@ import {
   ReportReason,
   ReportStatus,
 } from '../../entities/ContentReport';
+import { installFakeAi } from '../../../tests/helpers/fakeAi';
 
 const mockReportRepo = {
   findOne: jest.fn(),
@@ -63,6 +64,8 @@ function makeSong(overrides: Partial<Song> = {}): Song {
 }
 
 beforeEach(() => {
+  // Report submission runs AI triage (#273) — keep it on the shared fake.
+  installFakeAi();
   jest.clearAllMocks();
   (AppDataSource.getRepository as jest.Mock).mockImplementation((entity: unknown) => {
     if (entity === ContentReport) return mockReportRepo;

@@ -1,5 +1,5 @@
 import { PlaylistService } from '../PlaylistService';
-import { AIProviderService, IAIAdapter } from '../AI/AIProviderService';
+import { FakeAIAdapter, installFakeAi } from '../../../tests/helpers/fakeAi';
 import { Song } from '../../entities/Song';
 
 jest.mock('../../config/db', () => ({
@@ -16,7 +16,7 @@ describe('AI Mood/Prompt-based Playlist Curation (Issue #275)', () => {
   let mockPlaylistSongRepo: any;
   let mockCollaboratorRepo: any;
   let mockFollowRepo: any;
-  let mockAiAdapter: IAIAdapter;
+  let mockAiAdapter: FakeAIAdapter;
 
   const sampleTracks: Partial<Song>[] = [
     {
@@ -43,24 +43,15 @@ describe('AI Mood/Prompt-based Playlist Curation (Issue #275)', () => {
   ];
 
   beforeEach(() => {
-    mockAiAdapter = {
-      name: 'mock-curation-adapter',
-      generateText: jest.fn().mockResolvedValue({
-        text: JSON.stringify({
-          playlistName: 'Chill Coding Flow',
-          description: 'Soothing beats and ambient textures for deep work',
-          targetGenres: ['Lo-Fi', 'Ambient'],
-          targetTags: ['chill', 'focus', 'study'],
-        }),
-      }),
-      generateImage: jest.fn(),
-      embed: jest.fn(),
-    };
-
-    const aiService = new AIProviderService(mockAiAdapter);
-    // Set custom adapter on default singleton
-    const { getAIProviderService } = require('../AI/AIProviderService');
-    getAIProviderService().setAdapter(mockAiAdapter);
+    // PlaylistService resolves the getAIProviderService() singleton, so the
+    // shared fake is installed globally rather than injected.
+    mockAiAdapter = installFakeAi().adapter;
+    mockAiAdapter.textResponse = JSON.stringify({
+      playlistName: 'Chill Coding Flow',
+      description: 'Soothing beats and ambient textures for deep work',
+      targetGenres: ['Lo-Fi', 'Ambient'],
+      targetTags: ['chill', 'focus', 'study'],
+    });
 
     mockPlaylistRepo = {
       create: jest.fn(),
@@ -133,9 +124,7 @@ describe('AI Mood/Prompt-based Playlist Curation (Issue #275)', () => {
   });
 
   it('should fall back gracefully to prompt keywords if AI provider fails', async () => {
-    mockAiAdapter.generateText = jest
-      .fn()
-      .mockRejectedValue(new Error('AI provider connection timeout'));
+    mockAiAdapter.configure({ failWith: new Error('AI provider connection timeout') });
 
     const result = await playlistService.curateCandidatePlaylist('user-123', {
       prompt: 'cyberpunk synthwave workout',

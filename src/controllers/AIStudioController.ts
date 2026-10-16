@@ -114,6 +114,27 @@ export class AIStudioController {
     }
   };
 
+  /**
+   * Issue #285: opt-in lyric transcription. The body must carry
+   * `rightsConfirmed: true` — the artist's confirmation that they hold the
+   * rights to the lyrics — or the request is rejected before anything runs.
+   */
+  requestLyricsTranscription = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = (req as any).user.id as string;
+      const songId = routeParam(req.params.songId);
+      const record = await aiGenerationService.requestGeneration(
+        'lyricsTranscription',
+        songId,
+        userId,
+        { rightsConfirmed: req.body?.rightsConfirmed },
+      );
+      res.status(HTTP_STATUS.CREATED).json({ success: true, data: record });
+    } catch (error) {
+      handleError(req, res, error);
+    }
+  };
+
   suggestTags = async (req: Request, res: Response): Promise<void> => {
     try {
       const { title, description } = req.body;

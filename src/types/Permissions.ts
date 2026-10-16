@@ -33,6 +33,9 @@ export enum Permission {
 
   // Transaction logs visibility (Issue #39)
   TRANSACTION_LOGS_VIEW = 'transaction-logs:view',
+
+  // Platform-wide AI feature usage (Issue #289)
+  AI_USAGE_VIEW = 'ai-usage:view',
 }
 
 /**
@@ -59,6 +62,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     Permission.ROLE_ASSIGN,
     Permission.VERIFICATION_REVIEW,
     Permission.TRANSACTION_LOGS_VIEW,
+    Permission.AI_USAGE_VIEW,
   ],
   [UserRole.SUPER_ADMIN]: Object.values(Permission),
 };

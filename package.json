@@ -35,7 +35,9 @@
     "deadcode:production": "knip --production",
     "compose:check": "node scripts/check-compose-consistency.js",
     "env:check": "node scripts/check-env-example.js",
-    "env:check:strict": "node scripts/check-env-example.js --strict"
+    "env:check:strict": "node scripts/check-env-example.js --strict",
+    "ai:test-isolation": "node scripts/check-ai-test-isolation.js",
+    "benchmark:ai": "ts-node --transpile-only scripts/load-test-ai-concurrency.ts"
   },
   "lint-staged": {
     "*.ts": [

@@ -1,43 +1,5 @@
-import {
-  AIProviderService,
-  IAIAdapter,
-  GenerateTextOptions,
-  GenerateTextResult,
-  GenerateImageOptions,
-  GenerateImageResult,
-  EmbedOptions,
-  EmbedResult,
-  MockAIAdapter,
-} from '../AIProviderService';
-
-class FakeAIAdapter implements IAIAdapter {
-  readonly name = 'fake-custom-provider';
-  public generateTextCalledWith: GenerateTextOptions[] = [];
-  public generateImageCalledWith: GenerateImageOptions[] = [];
-  public embedCalledWith: EmbedOptions[] = [];
-
-  async generateText(options: GenerateTextOptions): Promise<GenerateTextResult> {
-    this.generateTextCalledWith.push(options);
-    return {
-      text: `Custom AI text response for: ${options.prompt}`,
-      usage: { promptTokens: 5, completionTokens: 5, totalTokens: 10 },
-    };
-  }
-
-  async generateImage(options: GenerateImageOptions): Promise<GenerateImageResult> {
-    this.generateImageCalledWith.push(options);
-    return {
-      images: [{ url: 'https://fake-cdn.example.com/generated-art.png' }],
-    };
-  }
-
-  async embed(options: EmbedOptions): Promise<EmbedResult> {
-    this.embedCalledWith.push(options);
-    return {
-      embeddings: [[0.1, 0.2, 0.3, 0.4]],
-    };
-  }
-}
+import { AIProviderService, MockAIAdapter } from '../AIProviderService';
+import { FakeAIAdapter } from '../../../../tests/helpers/fakeAi';
 
 describe('AIProviderService (Issue #268)', () => {
   it('should initialize with default MockAIAdapter when no adapter is provided', () => {
@@ -49,14 +11,15 @@ describe('AIProviderService (Issue #268)', () => {
     const service = new AIProviderService(new MockAIAdapter());
     expect(service.getAdapter().name).toBe('mock');
 
-    const fakeAdapter = new FakeAIAdapter();
+    const fakeAdapter = new FakeAIAdapter({
+      textResponse: (options) => `Custom AI text response for: ${options.prompt}`,
+    });
     service.setAdapter(fakeAdapter);
-    expect(service.getAdapter().name).toBe('fake-custom-provider');
+    expect(service.getAdapter().name).toBe('fake');
 
     const textResult = await service.generateText({ prompt: 'Test prompt' });
     expect(textResult.text).toBe('Custom AI text response for: Test prompt');
-    expect(fakeAdapter.generateTextCalledWith).toHaveLength(1);
-    expect(fakeAdapter.generateTextCalledWith[0].prompt).toBe('Test prompt');
+    expect(fakeAdapter.callsTo('generateText')).toEqual([{ prompt: 'Test prompt' }]);
   });
 
   it('should generate text without leaking vendor-specific types', async () => {
@@ -72,7 +35,7 @@ describe('AIProviderService (Issue #268)', () => {
 
     expect(result).toHaveProperty('text');
     expect(typeof result.text).toBe('string');
-    expect(result.usage?.totalTokens).toBe(10);
+    expect(result.usage?.totalTokens).toBe(2);
   });
 
   it('should generate images with the configured adapter', async () => {
@@ -86,8 +49,10 @@ describe('AIProviderService (Issue #268)', () => {
     });
 
     expect(result.images).toHaveLength(1);
-    expect(result.images[0].url).toBe('https://fake-cdn.example.com/generated-art.png');
-    expect(fakeAdapter.generateImageCalledWith[0].prompt).toBe('Cyberpunk album cover');
+    expect(result.images[0].url).toBe('https://fake-ai.test/image-1.png');
+    expect(fakeAdapter.callsTo('generateImage')).toEqual([
+      expect.objectContaining({ prompt: 'Cyberpunk album cover' }),
+    ]);
   });
 
   it('should generate vector embeddings with the configured adapter', async () => {
@@ -99,8 +64,8 @@ describe('AIProviderService (Issue #268)', () => {
     });
 
     expect(result.embeddings).toHaveLength(1);
-    expect(result.embeddings[0]).toEqual([0.1, 0.2, 0.3, 0.4]);
-    expect(fakeAdapter.embedCalledWith[0].text).toBe('Ambient chillout soundscape');
+    expect(result.embeddings[0]).toEqual(['Ambient chillout soundscape'.length, 0.5, 0.25]);
+    expect(fakeAdapter.callsTo('embed')).toEqual([{ text: 'Ambient chillout soundscape' }]);
   });
 
   it('MockAIAdapter should provide deterministic mock completions and embeddings', async () => {

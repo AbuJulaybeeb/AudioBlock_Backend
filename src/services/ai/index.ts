@@ -28,6 +28,14 @@ export function getAiProvider(): AiProvider {
   return cachedProvider;
 }
 
+/**
+ * Test-only: installs `provider` as the resolved provider so AI feature tests
+ * run against a fake (see tests/helpers/fakeAi.ts) instead of a real vendor.
+ */
+export function setAiProviderForTests(provider: AiProvider): void {
+  cachedProvider = provider;
+}
+
 /** Test-only: clears the cached provider so tests can re-resolve it. */
 export function resetAiProviderForTests(): void {
   cachedProvider = null;

@@ -69,9 +69,10 @@ and run on either the node process or the SQL database.
   `AI_FEATURE_TAGS_ENABLED`, `AI_FEATURE_DESCRIPTIONS_ENABLED`,
   `AI_FEATURE_COVER_ART_ENABLED`, `AI_FEATURE_MODERATION_TRIAGE_ENABLED`,
   `AI_FEATURE_SEARCH_ENABLED`, `AI_FEATURE_PLAYLISTS_ENABLED`,
-  `AI_FEATURE_TWEET_DRAFTS_ENABLED`. All default OFF. `coverArt`,
-  `descriptions`, and `tweetDrafts` have a call site wired up today; the rest
-  are reserved for when those features are built.
+  `AI_FEATURE_TWEET_DRAFTS_ENABLED`, `AI_FEATURE_LYRICS_TRANSCRIPTION_ENABLED`.
+  All default OFF. `coverArt`, `descriptions`, `tweetDrafts`, and
+  `lyricsTranscription` have a call site wired up today; the rest are reserved
+  for when those features are built.
 
 ### 6. Release-announcement tweet drafts
 
@@ -87,6 +88,47 @@ and run on either the node process or the SQL database.
   `/callback` handler there); the artist copies the approved text and posts
   it themselves.
 - **Data sent:** none to third parties; gated by `AI_FEATURE_TWEET_DRAFTS_ENABLED`.
+
+### 7. Opt-in, license-aware lyric transcription (Issue #285)
+
+- **Where:** `AiGenerationService` (`lyricsTranscription` feature),
+  `AiProvider.transcribeLyrics`, `src/workers/AiJobHandlers.ts`,
+  `POST /api/ai/songs/:songId/lyrics-transcription` and
+  `POST /api/ai-studio/songs/:songId/lyrics-transcription`.
+- **Rights confirmation:** the request body must contain
+  `{ "rightsConfirmed": true }` — the artist's explicit confirmation that they
+  hold the rights to the song's lyrics. Anything else (missing, `false`,
+  `"true"`) is rejected with `400 LYRICS_RIGHTS_NOT_CONFIRMED` before a record
+  is created or a job is queued. The confirmation is stored on the song
+  (`lyricsRightsConfirmedAt`, `lyricsRightsConfirmedBy`), and the job
+  re-checks it — a job never calls the provider for a song whose confirmation
+  is missing or was given by a different user.
+- **Storage:** the transcription is written to `Song.aiLyricsTranscription`
+  (with `aiLyricsTranscribedAt`), separate from artist-entered `Song.lyrics`,
+  so a transcription never overwrites lyrics the artist typed. Following
+  ADR-007, the `ai_generation_records` row only records that the job ran —
+  the lyrics themselves are not copied into it.
+- **Data sent:** the song's audio location, title and language hint go to the
+  configured provider, and only after the rights confirmation. The default
+  `NoopAiProvider` cannot transcribe audio: it returns an empty transcription
+  and the record is marked `failed` rather than storing invented lyrics.
+- **Feature flag:** `AI_FEATURE_LYRICS_TRANSCRIPTION_ENABLED` (default OFF).
+
+### 8. Admin AI usage panel (Issue #289)
+
+- **Where:** `GET /api/admin/ai/usage` (`AdminController.getAiUsage`,
+  `src/services/ai/AiUsageService.ts`).
+- **Access:** requires the `ai-usage:view` permission, granted to `admin` and
+  `super_admin` only.
+- **What it returns:** platform-wide totals plus usage aggregated **by
+  feature** and **by artist** (completed / failed / pending counts and a
+  per-feature breakdown per artist). Optional `from` / `to` ISO dates bound
+  the window; `limit` caps the artist list (default 50, max 200) while
+  `artistCount` still reports every artist that used AI.
+- **Sources:** `ai_generation_records` (cover art, descriptions, lyric
+  transcription) and `tweet_drafts`. Tag suggestions, playlist curation,
+  moderation triage and semantic search do not persist a per-call record yet,
+  so they do not appear in the panel.
 
 ---
 

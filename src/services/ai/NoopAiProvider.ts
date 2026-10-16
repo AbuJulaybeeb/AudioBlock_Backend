@@ -10,6 +10,8 @@ import {
   ContentModerationResult,
   EmbeddingInput,
   EmbeddingResult,
+  LyricsTranscriptionInput,
+  LyricsTranscriptionResult,
 } from './AiProvider';
 
 /**
@@ -99,5 +101,14 @@ export class NoopAiProvider implements AiProvider {
       model: 'noop-zero-embedding',
       provider: this.name,
     };
+  }
+
+  /**
+   * Issue #285: The no-op provider cannot listen to audio, and inventing
+   * lyrics would be worse than having none — so it returns an empty
+   * transcription and the caller records the generation as failed.
+   */
+  async transcribeLyrics(input: LyricsTranscriptionInput): Promise<LyricsTranscriptionResult> {
+    return { lyrics: '', language: input.language, provider: this.name };
   }
 }

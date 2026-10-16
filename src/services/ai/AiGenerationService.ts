@@ -8,16 +8,25 @@ import { JobQueueService } from '../JobQueueService';
 import { getAiProvider } from './index';
 import logger from '../../config/logger';
 
-export type AiGenerationFeature = 'coverArt' | 'descriptions';
+export type AiGenerationFeature = 'coverArt' | 'descriptions' | 'lyricsTranscription';
 
 /** JobQueueService job `type` used for each feature — handlers register against these. */
 export const AI_JOB_TYPE: Record<AiGenerationFeature, string> = {
   coverArt: 'ai.generate_cover_art',
   descriptions: 'ai.generate_description',
+  lyricsTranscription: 'ai.transcribe_lyrics',
 };
 
 export interface AiGenerationJobPayload {
   recordId: string;
+}
+
+export interface AiGenerationRequestOptions {
+  /**
+   * Issue #285: the artist's explicit confirmation that they hold the rights
+   * to the song's lyrics. Required for `lyricsTranscription`, ignored otherwise.
+   */
+  rightsConfirmed?: boolean;
 }
 
 /**
@@ -45,6 +54,7 @@ export class AiGenerationService {
     feature: AiGenerationFeature,
     songId: string,
     userId: string,
+    options: AiGenerationRequestOptions = {},
   ): Promise<AiGenerationRecord> {
     if (!isAiFeatureEnabled(feature)) {
       throw AppError.businessLogic(
@@ -64,6 +74,10 @@ export class AiGenerationService {
         undefined,
         'NOT_SONG_OWNER',
       );
+    }
+
+    if (feature === 'lyricsTranscription') {
+      await this.confirmLyricsRights(song, userId, options.rightsConfirmed);
     }
 
     const record = this.recordRepo.create({
@@ -111,6 +125,8 @@ export class AiGenerationService {
     if (feature === 'coverArt') {
       const result = await provider.generateCoverArt({ songId: song.id, title: song.title });
       await this.markCompleted(record, provider.name, { resultUrl: result.imageUrl });
+    } else if (feature === 'lyricsTranscription') {
+      await this.transcribeLyrics(record, song);
     } else {
       const result = await provider.generateDescription({
         songId: song.id,
@@ -118,6 +134,76 @@ export class AiGenerationService {
       });
       await this.markCompleted(record, provider.name, { resultText: result.description });
     }
+  }
+
+  /**
+   * Issue #285: lyric transcription is opt-in and license-aware. The artist
+   * must explicitly confirm they hold the rights to the lyrics; that
+   * confirmation is recorded on the song before any job is queued.
+   */
+  private async confirmLyricsRights(
+    song: Song,
+    userId: string,
+    rightsConfirmed: boolean | undefined,
+  ): Promise<void> {
+    if (rightsConfirmed !== true) {
+      throw AppError.validation(
+        'You must confirm you hold the rights to these lyrics before transcription can run',
+        { field: 'rightsConfirmed', value: rightsConfirmed },
+        'LYRICS_RIGHTS_NOT_CONFIRMED',
+      );
+    }
+    if (!song.s3OriginalUrl && !song.hlsMasterUrl) {
+      throw AppError.businessLogic(
+        'Song audio is not available for transcription yet',
+        undefined,
+        'SONG_AUDIO_NOT_READY',
+      );
+    }
+
+    song.lyricsRightsConfirmedAt = new Date();
+    song.lyricsRightsConfirmedBy = userId;
+    await this.songRepo.save(song);
+  }
+
+  /**
+   * Issue #285: runs the transcription for a queued job. Re-checks the rights
+   * confirmation so a job can never transcribe a song whose confirmation is
+   * missing or was given by someone other than the requesting artist.
+   */
+  private async transcribeLyrics(record: AiGenerationRecord, song: Song): Promise<void> {
+    if (!song.lyricsRightsConfirmedAt || song.lyricsRightsConfirmedBy !== record.userId) {
+      await this.markFailed(record.id, 'Lyric rights were not confirmed for this song');
+      return;
+    }
+
+    const audioUrl = song.s3OriginalUrl || song.hlsMasterUrl;
+    if (!audioUrl) {
+      throw new Error(`Song ${song.id} has no audio to transcribe`);
+    }
+
+    const provider = getAiProvider();
+    const result = await provider.transcribeLyrics({
+      songId: song.id,
+      title: song.title,
+      audioUrl,
+      language: song.language,
+    });
+
+    const lyrics = result.lyrics.trim();
+    if (!lyrics) {
+      await this.markFailed(record.id, `Provider "${provider.name}" returned no transcription`);
+      return;
+    }
+
+    song.aiLyricsTranscription = lyrics;
+    song.aiLyricsTranscribedAt = new Date();
+    if (result.language && !song.language) song.language = result.language;
+    await this.songRepo.save(song);
+
+    // The lyrics live on the Song only — the generation record stays a
+    // minimal event (ADR-007), so no resultText is stored for this feature.
+    await this.markCompleted(record, provider.name, {});
   }
 
   /** Marks a job permanently failed (retries exhausted) and notifies via webhook. */

@@ -8,6 +8,7 @@ const ALL_ENV_VARS = [
   'AI_FEATURE_SEARCH_ENABLED',
   'AI_FEATURE_PLAYLISTS_ENABLED',
   'AI_FEATURE_TWEET_DRAFTS_ENABLED',
+  'AI_FEATURE_LYRICS_TRANSCRIPTION_ENABLED',
 ];
 
 describe('aiFeatureFlags', () => {
@@ -29,6 +30,7 @@ describe('aiFeatureFlags', () => {
       search: false,
       playlists: false,
       tweetDrafts: false,
+      lyricsTranscription: false,
     });
   });
 
@@ -49,5 +51,6 @@ describe('aiFeatureFlags', () => {
 
   it('exposes the backing env var name for each feature', () => {
     expect(aiFeatureEnvVar('tweetDrafts')).toBe('AI_FEATURE_TWEET_DRAFTS_ENABLED');
+    expect(aiFeatureEnvVar('lyricsTranscription')).toBe('AI_FEATURE_LYRICS_TRANSCRIPTION_ENABLED');
   });
 });

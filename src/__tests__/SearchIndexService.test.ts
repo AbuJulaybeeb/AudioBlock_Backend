@@ -62,8 +62,13 @@ jest.mock('../config/redis', () => {
 
 import redis from '../config/redis';
 import { SearchIndexService, tokenize } from '../services/SearchIndexService';
+import { installFakeAi } from '../../tests/helpers/fakeAi';
 
-beforeEach(() => (redis as any).__reset());
+beforeEach(() => {
+  (redis as any).__reset();
+  // indexSong stores an embedding via the AI provider (#274) — keep it on the shared fake.
+  installFakeAi();
+});
 
 describe('tokenize', () => {
   it('lowercases, splits on non-alphanumerics and dedupes', () => {

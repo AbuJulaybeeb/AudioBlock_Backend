@@ -13,6 +13,19 @@ import { VerificationStatus } from '../entities/ArtistVerification';
 import { TransactionLogService } from '../services/TransactionLogService';
 import { IndexerService } from '../services/IndexerService';
 import { SongModerationService } from '../services/Song/SongModerationService';
+import { AiUsageService } from '../services/ai/AiUsageService';
+
+const MAX_AI_USAGE_ARTISTS = 200;
+
+/** Parses an optional ISO date query param, rejecting anything unparseable. */
+function parseDateParam(value: unknown, field: string): Date | undefined {
+  if (value === undefined || value === '') return undefined;
+  const date = typeof value === 'string' ? new Date(value) : new Date(NaN);
+  if (Number.isNaN(date.getTime())) {
+    throw AppError.validation(`${field} must be an ISO 8601 date`, { field, value });
+  }
+  return date;
+}
 
 /**
  * Admin-facing user & role management (Issue #100) and artist verification
@@ -25,6 +38,7 @@ export class AdminController {
   private static reportService = new ReportService();
   private static commentReportService = new CommentReportService();
   private static indexerService = new IndexerService();
+  private static aiUsageService = new AiUsageService();
 
   /**
    * GET /api/admin/reports — list the pending content-report moderation queue
@@ -313,6 +327,32 @@ export class AdminController {
         indexers: statuses,
         backfills: backfillStatuses,
       });
+    } catch (error) {
+      handleError(req, res, error);
+    }
+  };
+
+  /**
+   * GET /api/admin/ai/usage — platform-wide AI feature usage aggregated by
+   * feature and by artist (Issue #289). Optional `from` / `to` (ISO dates)
+   * bound the window; `limit` caps the per-artist list (default 50, max 200).
+   */
+  static getAiUsage = async (req: Request, res: Response) => {
+    try {
+      const from = parseDateParam(req.query.from, 'from');
+      const to = parseDateParam(req.query.to, 'to');
+      if (from && to && from > to) {
+        throw AppError.validation('from must be before to', { field: 'from' });
+      }
+      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), MAX_AI_USAGE_ARTISTS);
+
+      const usage = await AdminController.aiUsageService.getUsageSummary({
+        from,
+        to,
+        artistLimit: limit,
+      });
+
+      return res.status(HTTP_STATUS.OK).json({ success: true, data: usage });
     } catch (error) {
       handleError(req, res, error);
     }

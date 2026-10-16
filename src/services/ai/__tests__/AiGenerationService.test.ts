@@ -19,7 +19,7 @@ import { AiGenerationService } from '../AiGenerationService';
 import { AiGenerationRecord } from '../../../entities/AiGenerationRecord';
 import { Song } from '../../../entities/Song';
 import { JobQueueService } from '../../JobQueueService';
-import { getAiProvider, resetAiProviderForTests } from '..';
+import { FakeAiProvider, installFakeAi } from '../../../../tests/helpers/fakeAi';
 
 const SONG_ID = 'song-1';
 const USER_ID = 'user-1';
@@ -34,13 +34,17 @@ const mockRecordRepo = {
 
 const mockSongRepo = {
   findOneBy: jest.fn(),
+  save: jest.fn((entity) => Promise.resolve(entity)),
 };
+
+let fakeProvider: FakeAiProvider;
 
 beforeEach(() => {
   jest.clearAllMocks();
-  resetAiProviderForTests();
+  fakeProvider = installFakeAi().provider;
   delete process.env.AI_FEATURE_COVER_ART_ENABLED;
   delete process.env.AI_FEATURE_DESCRIPTIONS_ENABLED;
+  delete process.env.AI_FEATURE_LYRICS_TRANSCRIPTION_ENABLED;
 
   (AppDataSource.getRepository as jest.Mock).mockImplementation((entity) => {
     if (entity === AiGenerationRecord) return mockRecordRepo;
@@ -101,8 +105,15 @@ describe('AiGenerationService.generate', () => {
     await service.generate('coverArt', RECORD_ID);
 
     expect(mockRecordRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'completed', provider: getAiProvider().name }),
+      expect.objectContaining({
+        status: 'completed',
+        provider: 'fake',
+        resultUrl: `https://fake-ai.test/cover/${SONG_ID}.png`,
+      }),
     );
+    expect(fakeProvider.callsTo('generateCoverArt')).toEqual([
+      { songId: SONG_ID, title: 'My Song' },
+    ]);
     expect(mockPublish).toHaveBeenCalledWith(
       'ai.generation.completed',
       expect.objectContaining({ recordId: RECORD_ID, status: 'completed', feature: 'coverArt' }),
@@ -144,5 +155,158 @@ describe('AiGenerationService.markFailed', () => {
       'ai.generation.completed',
       expect.objectContaining({ status: 'failed', errorMessage: 'provider unavailable' }),
     );
+  });
+});
+
+describe('AiGenerationService lyric transcription (#285)', () => {
+  const ownedSong = () => ({
+    id: SONG_ID,
+    artistId: USER_ID,
+    title: 'My Song',
+    s3OriginalUrl: 's3://raw/song-1.mp3',
+  });
+
+  beforeEach(() => {
+    process.env.AI_FEATURE_LYRICS_TRANSCRIPTION_ENABLED = 'true';
+  });
+
+  it('is gated by its own feature flag', async () => {
+    delete process.env.AI_FEATURE_LYRICS_TRANSCRIPTION_ENABLED;
+    const service = new AiGenerationService();
+
+    await expect(
+      service.requestGeneration('lyricsTranscription', SONG_ID, USER_ID, { rightsConfirmed: true }),
+    ).rejects.toMatchObject({ code: 'AI_FEATURE_DISABLED' });
+  });
+
+  it.each([undefined, false, 'true'])(
+    'refuses to queue a transcription without an explicit rights confirmation (%p)',
+    async (rightsConfirmed) => {
+      mockSongRepo.findOneBy.mockResolvedValue(ownedSong());
+      const service = new AiGenerationService();
+
+      await expect(
+        service.requestGeneration('lyricsTranscription', SONG_ID, USER_ID, {
+          rightsConfirmed: rightsConfirmed as any,
+        }),
+      ).rejects.toMatchObject({ statusCode: 400, code: 'LYRICS_RIGHTS_NOT_CONFIRMED' });
+      expect(mockSongRepo.save).not.toHaveBeenCalled();
+      expect(mockRecordRepo.save).not.toHaveBeenCalled();
+      expect(JobQueueService.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects songs whose audio is not available yet', async () => {
+    mockSongRepo.findOneBy.mockResolvedValue({ ...ownedSong(), s3OriginalUrl: undefined });
+    const service = new AiGenerationService();
+
+    await expect(
+      service.requestGeneration('lyricsTranscription', SONG_ID, USER_ID, { rightsConfirmed: true }),
+    ).rejects.toMatchObject({ code: 'SONG_AUDIO_NOT_READY' });
+    expect(JobQueueService.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('records the rights confirmation on the song, then queues the job', async () => {
+    mockSongRepo.findOneBy.mockResolvedValue(ownedSong());
+    const service = new AiGenerationService();
+
+    await service.requestGeneration('lyricsTranscription', SONG_ID, USER_ID, {
+      rightsConfirmed: true,
+    });
+
+    expect(mockSongRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lyricsRightsConfirmedAt: expect.any(Date),
+        lyricsRightsConfirmedBy: USER_ID,
+      }),
+    );
+    expect(JobQueueService.enqueue).toHaveBeenCalledWith(
+      'ai.transcribe_lyrics',
+      { recordId: RECORD_ID },
+      { priority: 'low' },
+    );
+    // The provider is never called on the request path — only by the job.
+    expect(fakeProvider.calls).toHaveLength(0);
+  });
+
+  it('stores the transcription on the Song entity, not on the generation record', async () => {
+    mockRecordRepo.findOneBy.mockResolvedValue({
+      id: RECORD_ID,
+      songId: SONG_ID,
+      userId: USER_ID,
+      feature: 'lyricsTranscription',
+      status: 'pending',
+    });
+    mockSongRepo.findOneBy.mockResolvedValue({
+      ...ownedSong(),
+      lyrics: 'Lyrics the artist typed in',
+      lyricsRightsConfirmedAt: new Date(),
+      lyricsRightsConfirmedBy: USER_ID,
+    });
+    fakeProvider.lyrics = '  Verse one\nChorus  ';
+    const service = new AiGenerationService();
+
+    await service.generate('lyricsTranscription', RECORD_ID);
+
+    expect(fakeProvider.callsTo('transcribeLyrics')).toEqual([
+      { songId: SONG_ID, title: 'My Song', audioUrl: 's3://raw/song-1.mp3', language: undefined },
+    ]);
+    expect(mockSongRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aiLyricsTranscription: 'Verse one\nChorus',
+        aiLyricsTranscribedAt: expect.any(Date),
+        // Artist-entered lyrics are never overwritten by a transcription.
+        lyrics: 'Lyrics the artist typed in',
+      }),
+    );
+    const savedRecord = mockRecordRepo.save.mock.calls[0][0];
+    expect(savedRecord).toMatchObject({ status: 'completed', provider: 'fake' });
+    expect(savedRecord.resultText).toBeUndefined();
+  });
+
+  it('never calls the provider when the song has no rights confirmation', async () => {
+    const record = {
+      id: RECORD_ID,
+      songId: SONG_ID,
+      userId: USER_ID,
+      feature: 'lyricsTranscription',
+      status: 'pending',
+    };
+    mockRecordRepo.findOneBy.mockResolvedValue(record);
+    mockSongRepo.findOneBy.mockResolvedValue(ownedSong());
+    const service = new AiGenerationService();
+
+    await service.generate('lyricsTranscription', RECORD_ID);
+
+    expect(fakeProvider.calls).toHaveLength(0);
+    expect(mockSongRepo.save).not.toHaveBeenCalled();
+    expect(mockRecordRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failed',
+        errorMessage: 'Lyric rights were not confirmed for this song',
+      }),
+    );
+  });
+
+  it('marks the record failed instead of storing an empty transcription', async () => {
+    mockRecordRepo.findOneBy.mockResolvedValue({
+      id: RECORD_ID,
+      songId: SONG_ID,
+      userId: USER_ID,
+      feature: 'lyricsTranscription',
+      status: 'pending',
+    });
+    mockSongRepo.findOneBy.mockResolvedValue({
+      ...ownedSong(),
+      lyricsRightsConfirmedAt: new Date(),
+      lyricsRightsConfirmedBy: USER_ID,
+    });
+    fakeProvider.lyrics = '   ';
+    const service = new AiGenerationService();
+
+    await service.generate('lyricsTranscription', RECORD_ID);
+
+    expect(mockSongRepo.save).not.toHaveBeenCalled();
+    expect(mockRecordRepo.save).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
   });
 });

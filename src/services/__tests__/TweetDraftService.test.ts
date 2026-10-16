@@ -10,7 +10,7 @@ import { TweetDraftService } from '../TweetDraftService';
 import { TweetDraft } from '../../entities/TweetDraft';
 import { Song } from '../../entities/Song';
 import { User } from '../../entities/User';
-import { resetAiProviderForTests } from '../ai';
+import { FakeAiProvider, installFakeAi } from '../../../tests/helpers/fakeAi';
 
 const USER_ID = 'user-1';
 const OTHER_USER_ID = 'user-2';
@@ -27,10 +27,11 @@ const mockDraftRepo = {
 
 const mockSongRepo = { findOneBy: jest.fn() };
 const mockUserRepo = { findOne: jest.fn() };
+let fakeProvider: FakeAiProvider;
 
 beforeEach(() => {
   jest.clearAllMocks();
-  resetAiProviderForTests();
+  fakeProvider = installFakeAi().provider;
   delete process.env.AI_FEATURE_TWEET_DRAFTS_ENABLED;
 
   (AppDataSource.getRepository as jest.Mock).mockImplementation((entity) => {
@@ -77,6 +78,8 @@ describe('TweetDraftService.createDraft', () => {
     expect(draft.status).toBe('pending_review');
     expect(draft.text).toContain('New Track');
     expect(draft.text).toContain('Cool Artist');
+    expect(draft.provider).toBe('fake');
+    expect(fakeProvider.callsTo('draftTweet')).toHaveLength(1);
   });
 
   it('drafts without a specific song when none is given', async () => {
