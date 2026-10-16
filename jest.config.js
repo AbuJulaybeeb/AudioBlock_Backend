@@ -4,6 +4,9 @@ module.exports = {
   testEnvironment: "node",
   roots: ["<rootDir>/src", "<rootDir>/tests"],
   testMatch: ["**/__tests__/**/*.test.ts", "**/*.test.ts"],
+  // Strip AI vendor keys and pin AI_PROVIDER=noop before every test file so
+  // no test can depend on a live AI provider (#287).
+  setupFiles: ["<rootDir>/tests/setup/aiProviderIsolation.js"],
   moduleNameMapper: {
     "^reflect-metadata$": "<rootDir>/node_modules/reflect-metadata",
     // wasm-attestation-bindings is ESM-only and uses `import.meta`, which

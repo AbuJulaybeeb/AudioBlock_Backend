@@ -28,6 +28,8 @@ jobs:
         run: node scripts/check-compose-consistency.js
       - name: Validate .env.example vs required env (Issue # env-sync)
         run: node scripts/check-env-example.js
+      - name: Ensure tests never need a live AI provider key (Issue #287)
+        run: node scripts/check-ai-test-isolation.js
 
   deadcode:
     runs-on: ubuntu-latest
