@@ -282,13 +282,29 @@ export class AuthService {
     }).valid;
   }
 
+  /**
+   * Verify a recovery code and consume it (single-use enforcement, #331).
+   *
+   * Each backup code is stored as a bcrypt hash. On successful verification
+   * the matched hash is removed from the user's list and persisted, so the
+   * same code can never be accepted twice. The length check before/after
+   * the filter confirms the hash was actually removed, guarding against
+   * duplicate hashes that could allow reuse.
+   */
   private async verifyAndConsumeRecoveryCode(user: User, recoveryCode: string): Promise<boolean> {
     const hashes = user.twoFactorRecoveryCodeHashes || [];
     const normalized = this.normalizeRecoveryCode(recoveryCode);
 
     for (const hash of hashes) {
       if (await bcrypt.compare(normalized, hash)) {
-        user.twoFactorRecoveryCodeHashes = hashes.filter((storedHash) => storedHash !== hash);
+        const before = hashes.length;
+        const remaining = hashes.filter((storedHash) => storedHash !== hash);
+        // Single-use: the hash must have been removed. If the array didn't
+        // shrink, there were duplicate hashes — reject to prevent reuse.
+        if (remaining.length !== before - 1) {
+          return false;
+        }
+        user.twoFactorRecoveryCodeHashes = remaining;
         await this.userRepo.save(user);
         return true;
       }
