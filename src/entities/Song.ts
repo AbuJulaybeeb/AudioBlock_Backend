@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
@@ -12,6 +13,11 @@ import { Genre } from './Genre';
 import { TemplateSplit } from './RoyaltyTemplate';
 
 @Entity('songs') // pluralize for convention
+@Index('IDX_songs_artistId', ['artistId'])
+@Index('IDX_songs_genreId', ['genreId'])
+@Index('IDX_songs_status', ['status'])
+@Index('IDX_songs_mintStatus', ['mintStatus'])
+@Index('IDX_songs_createdAt', ['createdAt'])
 export class Song {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

@@ -1,4 +1,4 @@
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import AppDataSource from '../config/db';
 import { Tag } from '../entities/Tag';
 import { SongTag } from '../entities/SongTag';
@@ -37,13 +37,13 @@ export class TagService {
   }
 
   async getSongsByTagSlug(slug: string): Promise<Song[]> {
-    const tag = await this.tagRepo.findOneBy({ slug });
-    if (!tag) throw AppError.notFound('Tag not found');
-
-    const songTags = await this.songTagRepo.find({ where: { tagId: tag.id } });
-    if (songTags.length === 0) return [];
-
-    return this.songRepo.findByIds(songTags.map((st) => st.songId));
+    // Single joined query instead of find-then-findByIds (avoids N+1, #332).
+    return this.songRepo
+      .createQueryBuilder('song')
+      .innerJoin('song_tags', 'st', 'st.songId = song.id')
+      .innerJoin('tags', 'tag', 'tag.id = st.tagId')
+      .where('tag.slug = :slug', { slug })
+      .getMany();
   }
 
   /**
@@ -63,9 +63,13 @@ export class TagService {
     const existingSongTags = await this.songTagRepo.find({ where: { songId } });
     const existingTagIds = new Set(existingSongTags.map((st) => st.tagId));
 
+    // Batch lookup existing tags instead of one query per name (#332).
+    const existingTags = await this.tagRepo.find({ where: { name: In(normalizedNames) } });
+    const existingByName = new Map(existingTags.map((t) => [t.name, t]));
+
     const tags: Tag[] = [];
     for (const name of normalizedNames) {
-      let tag = await this.tagRepo.findOneBy({ name });
+      let tag = existingByName.get(name);
       if (!tag) {
         tag = this.tagRepo.create({ name, slug: slugify(name), category });
         tag = await this.tagRepo.save(tag);
@@ -79,8 +83,9 @@ export class TagService {
       throw AppError.validation(`A song may have at most ${MAX_TAGS_PER_SONG} tags`);
     }
 
-    for (const tagId of newTagIds) {
-      await this.songTagRepo.save(this.songTagRepo.create({ songId, tagId }));
+    // Batch insert new song-tag links (#332).
+    if (newTagIds.length > 0) {
+      await this.songTagRepo.save(newTagIds.map((tagId) => this.songTagRepo.create({ songId, tagId })));
     }
 
     return tags;
