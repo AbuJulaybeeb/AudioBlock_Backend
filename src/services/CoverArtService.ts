@@ -7,6 +7,7 @@ import AppDataSource from '../config/db';
 import { Song } from '../entities/Song';
 import { PinataService } from './PinataService';
 import { AppError } from '../errors/AppError';
+import { validateFileContent } from '../utils/contentSniffing';
 import logger from '../config/logger';
 
 const THUMBNAIL_SIZES = [150, 300, 600];
@@ -67,6 +68,18 @@ export class CoverArtService {
         'Unsupported image format. Allowed formats: JPEG, PNG, WebP',
         undefined,
         'INVALID_IMAGE_FORMAT',
+      );
+    }
+
+    // #350 — validate actual file content via magic bytes, not just the
+    // client-declared mimetype or filename extension.
+    try {
+      validateFileContent(file.buffer, file.mimetype, ALLOWED_MIMETYPES);
+    } catch (err) {
+      throw AppError.validation(
+        err instanceof Error ? err.message : 'Invalid file content',
+        undefined,
+        'INVALID_FILE_CONTENT',
       );
     }
 

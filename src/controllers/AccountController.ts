@@ -6,18 +6,11 @@ import { handleError } from '../utils/helpers';
 import { RequestAccountDeletionDTO } from '../dtos/AccountDeletionDTO';
 import { AccountDeletionService } from '../services/AccountDeletionService';
 import { UpdateProfileDTO } from '../dtos/UpdateProfileDTO';
+import { formatValidationErrors } from '../middlewares/validate';
 import { Repository } from 'typeorm';
 import { User } from '../entities/User';
 import AppDataSource from '../config/db';
 import { AccountMergeService } from '../services/AccountMergeService';
-
-/** Turn class-validator errors into the standard `{ field, message }` detail shape. */
-function toValidationDetails(errors: { property: string; constraints?: Record<string, string> }[]) {
-  return errors.map((err) => ({
-    field: err.property,
-    message: Object.values(err.constraints || {})[0] ?? 'Invalid value',
-  }));
-}
 
 /**
  * Self-service account lifecycle endpoints (Issue #633).
@@ -74,7 +67,7 @@ export class AccountController {
       });
       const errors = await validate(dto);
       if (errors.length > 0) {
-        throw AppError.validation('Validation failed', toValidationDetails(errors));
+        throw AppError.validation('Validation failed', formatValidationErrors(errors));
       }
 
       if (dto.confirm !== true) {
@@ -171,7 +164,7 @@ export class AccountController {
       });
       const errors = await validate(dto);
       if (errors.length > 0) {
-        throw AppError.validation('Validation failed', toValidationDetails(errors));
+        throw AppError.validation('Validation failed', formatValidationErrors(errors));
       }
 
       const user = await this.userRepo.findOne({ where: { id: userId } });
