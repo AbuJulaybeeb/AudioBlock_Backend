@@ -136,6 +136,7 @@ _\* Required for the selected network. All five IDs must be set for the chosen `
 
 | Variable                          | Required | Default | Description                                                         |
 | --------------------------------- | -------- | ------- | ------------------------------------------------------------------- |
+| `INDEXER_ENABLED`                 | No       | `false` | Kill switch for the standalone indexer worker; set `true`/`1` to start it, no deploy needed |
 | `INDEXER_POLL_INTERVAL_MS`        | No       | `5000`  | Poll interval for the Soroban event indexer                         |
 | `INDEXER_PAGE_SIZE`               | No       | `100`   | Max events fetched per `getEvents` page                             |
 | `INDEXER_LAG_MONITOR_INTERVAL_MS` | No       | `60000` | Interval for computing/exporting indexer lag                        |

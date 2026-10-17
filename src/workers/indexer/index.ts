@@ -62,7 +62,18 @@ function shutdown(signal: string): void {
   void finish();
 }
 
+// Issue #247: new subsystem against production contracts should be
+// reversible without a deploy. Defaults off until rollout is validated.
+function isIndexerEnabled(): boolean {
+  return ['true', '1'].includes((process.env.INDEXER_ENABLED || '').toLowerCase());
+}
+
 export async function main(): Promise<void> {
+  if (!isIndexerEnabled()) {
+    logger.info('Indexer worker disabled (set INDEXER_ENABLED=true to start it)');
+    return;
+  }
+
   await AppDataSource.initialize();
   logger.info('Indexer worker connected to database');
 
