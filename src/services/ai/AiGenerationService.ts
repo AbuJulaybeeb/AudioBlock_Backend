@@ -8,7 +8,7 @@ import { JobQueueService } from '../JobQueueService';
 import { getAiProvider } from './index';
 import logger from '../../config/logger';
 
-export type AiGenerationFeature = 'coverArt' | 'descriptions' | 'lyricsTranscription';
+export type AiGenerationFeature = 'coverArt' | 'descriptions' | 'lyricsTranscription' | 'playlistCoverArt';
 
 /** JobQueueService job `type` used for each feature — handlers register against these. */
 export const AI_JOB_TYPE: Record<AiGenerationFeature, string> = {
@@ -123,6 +123,10 @@ export class AiGenerationService {
     const provider = getAiProvider();
 
     if (feature === 'coverArt') {
+      const result = await provider.generateCoverArt({ songId: song.id, title: song.title });
+      await this.markCompleted(record, provider.name, { resultUrl: result.imageUrl });
+    } else if (feature === 'playlistCoverArt') {
+      // Issue #294: reuse the same AI cover-art code path for playlists (#294).
       const result = await provider.generateCoverArt({ songId: song.id, title: song.title });
       await this.markCompleted(record, provider.name, { resultUrl: result.imageUrl });
     } else if (feature === 'lyricsTranscription') {

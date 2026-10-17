@@ -89,8 +89,18 @@ async function buildMetadata(song: Song, coverCid: string, masterUrl: string) {
       { trait_type: 'loudness', value: song.loudness || 0 },
       { trait_type: 'genre', value: song.genre },
       { trait_type: 'cover_url', value: coverCid },
+      // AI disclosure (#283): flag when any AI-generated content was accepted.
       ...(song.aiGeneratedDescription && song.aiDescriptionApproved
         ? [{ trait_type: 'ai_description_used', value: 'true' }]
+        : []),
+      ...(song.aiGeneratedCoverUrl && song.aiDescriptionApproved
+        ? [{ trait_type: 'ai_cover_used', value: 'true' }]
+        : []),
+      // Present whenever any AI content was accepted (#283).
+      ...(song.aiDescriptionApproved ||
+        (song.aiGeneratedCoverUrl && song.aiDescriptionApproved) ||
+        (song.aiLyricTranscription && song.aiDescriptionApproved)
+        ? [{ trait_type: 'ai_assisted', value: 'true' }]
         : []),
     ],
   };
