@@ -24,6 +24,13 @@ export interface ValidatedEnv {
   PRIVY_APP_ID?: string;
   PRIVY_APP_SECRET?: string;
   PRIVY_VERIFICATION_KEY?: string;
+  // #293 — AI provider configuration per environment
+  AI_PROVIDER: string;
+  AI_OPENAI_API_KEY?: string;
+  AI_ANTHROPIC_API_KEY?: string;
+  AI_TIMEOUT_MS: string;
+  // #291 — data retention controls
+  AI_DATA_RETENTION_OPT_OUT: string;
 }
 
 const requiredVars: (keyof ValidatedEnv)[] = [
@@ -88,6 +95,13 @@ export function validateEnvironment(): ValidatedEnv {
     PRIVY_APP_ID: process.env.PRIVY_APP_ID,
     PRIVY_APP_SECRET: process.env.PRIVY_APP_SECRET,
     PRIVY_VERIFICATION_KEY: process.env.PRIVY_VERIFICATION_KEY,
+    // #293 — AI provider configuration
+    AI_PROVIDER: process.env.AI_PROVIDER || 'noop',
+    AI_OPENAI_API_KEY: process.env.AI_OPENAI_API_KEY,
+    AI_ANTHROPIC_API_KEY: process.env.AI_ANTHROPIC_API_KEY,
+    AI_TIMEOUT_MS: process.env.AI_TIMEOUT_MS || '10000',
+    // #291 — data retention opt-out
+    AI_DATA_RETENTION_OPT_OUT: process.env.AI_DATA_RETENTION_OPT_OUT || 'false',
   };
 }
 
