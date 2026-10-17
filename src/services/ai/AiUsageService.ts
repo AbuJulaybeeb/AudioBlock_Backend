@@ -10,6 +10,10 @@ export interface AiUsageCounts {
   completed: number;
   failed: number;
   pending: number;
+  /** Sum of estimatedCostUsd across rows (issue #277). */
+  estimatedCostUsd: number;
+  /** Sum of estimatedTokens across rows (issue #277). */
+  estimatedTokens: number;
 }
 
 export interface AiFeatureUsage extends AiUsageCounts {
@@ -46,13 +50,21 @@ interface UsageRow {
   count: string | number;
 }
 
-const emptyCounts = (): AiUsageCounts => ({ total: 0, completed: 0, failed: 0, pending: 0 });
+const emptyCounts = (): AiUsageCounts => ({ total: 0, completed: 0, failed: 0, pending: 0, estimatedCostUsd: 0, estimatedTokens: 0 });
 
-function addToCounts(counts: AiUsageCounts, status: string, n: number): void {
+function addToCounts(
+  counts: AiUsageCounts,
+  status: string,
+  n: number,
+  costUsd = 0,
+  tokens = 0,
+): void {
   counts.total += n;
   if (status === 'completed' || status === 'failed' || status === 'pending') {
     counts[status] += n;
   }
+  counts.estimatedCostUsd += costUsd;
+  counts.estimatedTokens += tokens;
 }
 
 /**

@@ -46,3 +46,16 @@ export class AiGenerationRecord {
   @Column({ type: 'timestamp', nullable: true })
   completedAt?: Date;
 }
+
+  /**
+   * Estimated cost of this AI call in USD (issue #277). Set at request time
+   * from provider pricing so per-artist usage can be aggregated without
+   * vendor dashboards.
+   */
+  @Column({ type: 'decimal', precision: 12, scale: 6, nullable: true })
+  estimatedCostUsd?: string | null;
+
+  /** Approximate tokens consumed (issue #277), when the provider reports it. */
+  @Column({ type: 'int', nullable: true })
+  estimatedTokens?: number | null;
+}
