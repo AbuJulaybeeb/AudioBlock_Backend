@@ -54,6 +54,13 @@ export const dbPoolWaiting = new client.Gauge({
   registers: [register],
 });
 
+/** #334 — 1 when the pool is exhausted (all connections in use AND callers waiting). */
+export const dbPoolExhausted = new client.Gauge({
+  name: 'db_pool_exhausted',
+  help: '1 when DB pool is exhausted (active >= max AND waiting > 0), else 0',
+  registers: [register],
+});
+
 export const songsUploadedTotal = new client.Counter({
   name: 'songs_uploaded_total',
   help: 'Total number of songs uploaded',
@@ -189,9 +196,14 @@ export async function updateDbPoolMetrics(pool: {
   idleCount: number;
   waitingCount: number;
 }): Promise<void> {
-  dbPoolActive.set(pool.totalCount - pool.idleCount);
+  const active = pool.totalCount - pool.idleCount;
+  dbPoolActive.set(active);
   dbPoolIdle.set(pool.idleCount);
   dbPoolWaiting.set(pool.waitingCount);
+  // #334 — 1 when the pool is exhausted (all connections in use AND callers
+  // waiting), 0 otherwise. Sustained 1 triggers the DB pool alert.
+  const exhausted = pool.waitingCount > 0 && active >= pool.totalCount ? 1 : 0;
+  dbPoolExhausted.set(exhausted);
 }
 
 /**

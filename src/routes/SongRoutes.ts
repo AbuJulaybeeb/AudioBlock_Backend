@@ -10,6 +10,7 @@ import fs from 'fs';
 import { SongController } from '../controllers/SongController';
 import { EmbedController } from '../controllers/EmbedController';
 import { SubmitSignedXdrDTO } from '../dtos/SubmitSignedXdrDTO';
+import { idempotency } from '../middlewares/idempotency';
 
 const uploadController = new UploadController();
 const router = Router();
@@ -119,6 +120,7 @@ router.post(
 router.post(
   '/upload/finalize',
   authArtistMiddleware,
+  idempotency(),
   validateDTO(FinalizeUploadDTO),
   uploadController.finalizeUpload,
 );
@@ -133,10 +135,11 @@ router.get('/embed/:id', EmbedController.getSongEmbed);
 
 // Soroban on-chain song minting: the artist's wallet signs, the backend
 // only builds and relays the transaction.
-router.post('/:id/onchain/prepare-mint', authArtistMiddleware, SongController.prepareMint);
+router.post('/:id/onchain/prepare-mint', authArtistMiddleware, idempotency(), SongController.prepareMint);
 router.post(
   '/:id/onchain/submit-mint',
   authArtistMiddleware,
+  idempotency(),
   validateDTO(SubmitSignedXdrDTO),
   SongController.submitMint,
 );

@@ -129,3 +129,43 @@ The following checks run on every pull request and must pass before merge:
 - **ESLint complexity**: Existing complex functions use `// eslint-disable-next-line complexity` with a reference to `docs/refactoring_priority.md`.
 - **knip dead code**: Existing findings are tracked in `knip.config.ts` via `ignore` entries.
 - **gitleaks**: Add patterns to `.gitleaks.toml` under `[allowlist]` with a comment explaining the suppression.
+
+---
+
+## 7. Pagination Convention (#337)
+
+All list endpoints use the same pagination parameters and response shape:
+
+### Request
+
+| Param | Type | Default | Max | Description |
+|-------|------|---------|-----|-------------|
+| `page` | integer | `1` | — | 1-indexed page number |
+| `limit` | integer | `20` | `100` | Items per page |
+
+### Response envelope
+
+```json
+{
+  "data": [...],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 150,
+    "totalPages": 8,
+    "hasMore": true
+  }
+}
+```
+
+### Usage
+
+```typescript
+import { parsePagination, paginatedResponse } from '@/utils/pagination';
+
+const { page, limit, skip } = parsePagination(req.query);
+const [items, total] = await repo.findAndCount({ skip, take: limit });
+res.json(paginatedResponse(items, total, page, limit));
+```
+
+Invalid `page`/`limit` values degrade to defaults rather than erroring (e.g. `page=0` → `page=1`, `limit=500` → `limit=100`).

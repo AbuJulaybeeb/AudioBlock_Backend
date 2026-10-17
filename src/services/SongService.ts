@@ -63,12 +63,19 @@ export class SongService {
   async updateSong(id: string, data: any) {
     const song = await this.getSong(id);
     Object.assign(song, data);
-    return await this.songRepo.save(song);
+    const result = await this.songRepo.save(song);
+    // Invalidate the cached streaming manifest so updated metadata is
+    // reflected immediately, not only after TTL expiry (#335).
+    await CacheService.clearSong(id);
+    return result;
   }
 
   async deleteSong(id: string) {
     const song = await this.getSong(id);
     await this.songRepo.remove(song);
+    // Invalidate cache on delete so a re-created song with the same ID
+    // doesn't serve stale data (#335).
+    await CacheService.clearSong(id);
     return { success: true };
   }
 
