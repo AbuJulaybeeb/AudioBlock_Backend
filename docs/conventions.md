@@ -129,3 +129,33 @@ The following checks run on every pull request and must pass before merge:
 - **ESLint complexity**: Existing complex functions use `// eslint-disable-next-line complexity` with a reference to `docs/refactoring_priority.md`.
 - **knip dead code**: Existing findings are tracked in `knip.config.ts` via `ignore` entries.
 - **gitleaks**: Add patterns to `.gitleaks.toml` under `[allowlist]` with a comment explaining the suppression.
+
+## Prompt-injection defenses for AI features (#282)
+
+Any time user-supplied text (song title, description, report text, lyrics) is
+interpolated into an AI prompt:
+
+1. Never concatenate raw user strings into instructions.
+2. Wrap the value with `delimitUserContent()` from
+   `src/services/AI/promptSafety.ts`.
+3. Include `PROMPT_INJECTION_SYSTEM_PREAMBLE` once at the top of the prompt.
+4. Treat model output as untrusted; validate before using in HTML, SQL, or
+   shell contexts.
+
+Example:
+
+```ts
+import { delimitUserContent, PROMPT_INJECTION_SYSTEM_PREAMBLE } from '../services/AI/promptSafety';
+
+const prompt = [
+  PROMPT_INJECTION_SYSTEM_PREAMBLE,
+  'Summarize the following track for a store listing:',
+  delimitUserContent(song.description),
+].join('\n');
+```
+
+## AI-assisted moderation consent (#295)
+
+Report submission must collect **explicit** `aiConsent: true` before any
+report text is sent to a third-party AI provider. Default is consent withheld.
+Withholding consent must never block filing the report itself.

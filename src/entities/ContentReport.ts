@@ -105,6 +105,14 @@ export class ContentReport {
   @Column({ type: 'varchar', nullable: true })
   aiProvider?: string | null;
 
+  /**
+   * Explicit reporter consent for third-party AI pre-scoring (#295).
+   * Defaults to false (consent withheld). AI triage is skipped when false;
+   * the report itself is still filed normally.
+   */
+  @Column({ type: 'boolean', default: false })
+  aiConsent!: boolean;
+
   @CreateDateColumn()
   createdAt!: Date;
 

@@ -7,6 +7,7 @@ import { SearchIndexService } from './SearchIndexService';
 import { TransactionLogService } from './TransactionLogService';
 import { CacheService } from './CacheService';
 import { getAiProvider } from './ai';
+import { delimitUserContent, PROMPT_INJECTION_SYSTEM_PREAMBLE } from './AI/promptSafety';
 import logger from '../config/logger';
 
 /**
@@ -21,6 +22,8 @@ const VALID_ACTIONS = Object.values(ReportAction);
 export interface SubmitReportInput {
   reason: string;
   description?: string;
+  /** Explicit consent to send report text to a third-party AI provider (#295). */
+  aiConsent?: boolean;
 }
 
 export interface ResolveReportInput {
@@ -84,11 +87,16 @@ export class ReportService {
       reason,
       description: input.description?.trim() || null,
       status: ReportStatus.PENDING,
+      // Explicit, not implied: opt-in only (#295).
+      aiConsent: input.aiConsent === true,
     });
     await this.reportRepo.save(report);
 
-    // Issue #273: Score report with AI (fails open if AI call errors)
-    await this.scoreReportWithAI(report, song);
+    // Issue #273: Score report with AI (fails open if AI call errors).
+    // Skipped entirely unless the reporter opted in (#295).
+    if (report.aiConsent) {
+      await this.scoreReportWithAI(report, song);
+    }
 
     const pendingReports = await this.reportRepo.count({
       where: { songId, status: ReportStatus.PENDING },
@@ -280,12 +288,13 @@ export class ReportService {
   private async scoreReportWithAI(report: ContentReport, song: Song): Promise<void> {
     try {
       const provider = getAiProvider();
+      // Fence user-supplied text so it cannot be read as instructions (#282).
       const result = await provider.scoreContentReport({
         reportId: report.id,
         contentType: 'song',
-        contentText: `${song.title} - ${song.description || ''}`,
+        contentText: delimitUserContent(`${song.title} - ${song.description || ''}`),
         reportReason: report.reason,
-        reporterContext: report.description || '',
+        reporterContext: delimitUserContent(report.description || ''),
       });
 
       report.aiSeverityScore = result.severityScore;
