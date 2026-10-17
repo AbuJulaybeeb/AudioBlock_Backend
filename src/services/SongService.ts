@@ -934,7 +934,14 @@ async function submitToProcessingQueue(ctx: UploadContext, song: Song): Promise<
 }
 
 function buildUploadKey(ctx: UploadContext, checksum: string): string {
-  return `songs/${ctx.userId}/${ctx.songId}/${checksum}`;
+  // #351 — sanitize each component to prevent path traversal and collisions
+  const sanitize = (v: string, name: string): string => {
+    if (!v || /[/\\]|\.\.|[^a-zA-Z0-9_-]/.test(v) || v.length > 128) {
+      throw new Error(`Invalid ${name} for S3 key`);
+    }
+    return v;
+  };
+  return `songs/${sanitize(ctx.userId, 'userId')}/${sanitize(ctx.songId, 'songId')}/${sanitize(checksum, 'checksum')}`;
 }
 
 function validateChunks(chunks: Buffer[]): void {
