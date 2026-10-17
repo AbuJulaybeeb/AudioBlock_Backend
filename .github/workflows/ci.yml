@@ -24,10 +24,26 @@ jobs:
         run: npm ci
       - name: Run ESLint
         run: npm run lint
+
+  audit:
+    name: Dependency vulnerability gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: npm audit (fail on high/critical)
+        run: npm audit --audit-level=high
       - name: Validate docker-compose consistency (Issue #404)
         run: node scripts/check-compose-consistency.js
       - name: Validate .env.example vs required env (Issue # env-sync)
         run: node scripts/check-env-example.js
+      - name: Check OpenAPI spec for route drift (Issue #338)
+        run: node scripts/check-openapi-drift.js
       - name: Ensure tests never need a live AI provider key (Issue #287)
         run: node scripts/check-ai-test-isolation.js
 
