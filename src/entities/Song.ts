@@ -117,6 +117,10 @@ export class Song {
   @Column({ nullable: true })
   language?: string;
 
+  /** Issue #284: Cached translations keyed by language code (#284). */
+  @Column({ type: 'simple-json', nullable: true })
+  translations?: Record<string, { title: string; description: string; artistName: string }>;
+
   /** Issue #269: AI-generated description draft for artist approval */
   @Column({ type: 'text', nullable: true })
   aiGeneratedDescription?: string | null;

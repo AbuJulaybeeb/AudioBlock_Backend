@@ -404,17 +404,20 @@ export class IndexerWorker {
    * the others (Issue #234).
    */
   private async runSafely(contract: IndexerContract): Promise<void> {
+    const startedAt = Date.now();
     try {
       const outcome = await this.pollOnce(contract);
+      const durationMs = Date.now() - startedAt;
       logger.info(
-        {
-          contract: contract.contractType,
-          ...outcome,
-        },
-        'Indexer poll cycle complete',
+        { contract: contract.contractType, network: this.network, durationMs, ...outcome },
+        `Indexer poll cycle complete: ${contract.contractType} fetched=${outcome.eventsFetched} processed=${outcome.eventsProcessed} (${durationMs}ms)`,
       );
     } catch (err) {
-      logger.error({ contract: contract.contractType, err }, 'Indexer poll cycle crashed');
+      const durationMs = Date.now() - startedAt;
+      logger.error(
+        { contract: contract.contractType, network: this.network, durationMs, err },
+        `Indexer poll cycle crashed: ${contract.contractType} (${durationMs}ms)`,
+      );
     }
   }
 

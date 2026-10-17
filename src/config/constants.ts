@@ -404,3 +404,25 @@ export function getRequiredEnv(key: string): string {
 export function formatTimestamp(): string {
   return new Date().toISOString();
 }
+
+// ── Timezone & Date Handling Convention (#349) ───────────────────────────────
+//
+// All timestamps in this application are stored and transmitted in UTC:
+//
+// - Database: TypeORM's `@CreateDateColumn` and `@UpdateDateColumn` use
+//   PostgreSQL's `timestamp with time zone` type, which stores UTC internally.
+//   The database driver returns Date objects that serialize to UTC via
+//   `toISOString()` (e.g. "2025-01-15T12:00:00.000Z").
+//
+// - API responses: All date fields are serialized as ISO 8601 strings with
+//   explicit UTC offset ("Z" suffix) via `Date.toISOString()`. Clients should
+//   parse these as UTC and convert to local time for display.
+//
+// - API input: Accepts ISO 8601 date strings (via `@IsDateString()` decorators).
+//   Strings without explicit timezone are interpreted as UTC.
+//
+// - Cron/scheduled jobs: Use UTC timestamps internally. Any display-facing
+//   formatting must convert to the user's local timezone explicitly.
+//
+// - Analytics/period boundaries: Always computed in UTC to ensure consistent
+//   aggregation across all users regardless of their local timezone.

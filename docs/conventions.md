@@ -130,42 +130,32 @@ The following checks run on every pull request and must pass before merge:
 - **knip dead code**: Existing findings are tracked in `knip.config.ts` via `ignore` entries.
 - **gitleaks**: Add patterns to `.gitleaks.toml` under `[allowlist]` with a comment explaining the suppression.
 
----
+## Prompt-injection defenses for AI features (#282)
 
-## 7. Pagination Convention (#337)
+Any time user-supplied text (song title, description, report text, lyrics) is
+interpolated into an AI prompt:
 
-All list endpoints use the same pagination parameters and response shape:
+1. Never concatenate raw user strings into instructions.
+2. Wrap the value with `delimitUserContent()` from
+   `src/services/AI/promptSafety.ts`.
+3. Include `PROMPT_INJECTION_SYSTEM_PREAMBLE` once at the top of the prompt.
+4. Treat model output as untrusted; validate before using in HTML, SQL, or
+   shell contexts.
 
-### Request
+Example:
 
-| Param | Type | Default | Max | Description |
-|-------|------|---------|-----|-------------|
-| `page` | integer | `1` | — | 1-indexed page number |
-| `limit` | integer | `20` | `100` | Items per page |
+```ts
+import { delimitUserContent, PROMPT_INJECTION_SYSTEM_PREAMBLE } from '../services/AI/promptSafety';
 
-### Response envelope
-
-```json
-{
-  "data": [...],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 150,
-    "totalPages": 8,
-    "hasMore": true
-  }
-}
+const prompt = [
+  PROMPT_INJECTION_SYSTEM_PREAMBLE,
+  'Summarize the following track for a store listing:',
+  delimitUserContent(song.description),
+].join('\n');
 ```
 
-### Usage
+## AI-assisted moderation consent (#295)
 
-```typescript
-import { parsePagination, paginatedResponse } from '@/utils/pagination';
-
-const { page, limit, skip } = parsePagination(req.query);
-const [items, total] = await repo.findAndCount({ skip, take: limit });
-res.json(paginatedResponse(items, total, page, limit));
-```
-
-Invalid `page`/`limit` values degrade to defaults rather than erroring (e.g. `page=0` → `page=1`, `limit=500` → `limit=100`).
+Report submission must collect **explicit** `aiConsent: true` before any
+report text is sent to a third-party AI provider. Default is consent withheld.
+Withholding consent must never block filing the report itself.

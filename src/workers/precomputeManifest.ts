@@ -6,6 +6,15 @@ import redis from '../config/redis';
 const s3 = new AWS.S3({ region: process.env.AWS_REGION });
 
 const CACHE_TTL = Number(process.env.MANIFEST_CACHE_TTL || 300); // seconds
+
+// #352 — Presigned URL expiry rationale:
+// 5 minutes (300s) balances usability against exposure window.
+// - HLS segments are short (~2-10s each); a 5-min URL covers many segments
+//   and re-fetching on expiry is cheap (CDN-cached).
+// - Longer expiry (e.g. 1hr) increases the window if a URL leaks.
+// - Shorter expiry (e.g. 60s) causes frequent re-fetches during continuous
+//   playback and increases latency when seeking.
+// Override via SIGNED_URL_EXPIRES for deployments with different CDN/latency profiles.
 const SIGNED_EXPIRES = Number(process.env.SIGNED_URL_EXPIRES || 300);
 
 function getSignedUrl(key: string) {

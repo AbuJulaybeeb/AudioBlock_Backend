@@ -248,6 +248,25 @@ CREATE TABLE indexed_events (
 );
 ```
 
+## Testing
+
+### Unit tests
+
+`src/__tests__/IndexerWorker.test.ts` covers the worker against a mocked
+`SorobanEventReader` (happy path, empty batches, RPC errors) and runs as
+part of the normal `npm test` suite, with no network access.
+
+### Integration test against testnet (Issue #249)
+
+`src/__tests__/IndexerWorker.integration.test.ts` polls real testnet RPC for
+a configured contract and asserts the decoded event shape. It is skipped by
+default — set `RUN_INDEXER_INTEGRATION_TEST=true` to run it locally (testnet
+contract IDs and RPC URL must already be configured per "Quick Start" above):
+
+```bash
+RUN_INDEXER_INTEGRATION_TEST=true npx jest IndexerWorker.integration
+```
+
 ## Troubleshooting
 
 ### Indexer Not Starting

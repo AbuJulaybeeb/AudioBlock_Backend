@@ -11,6 +11,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > GitHub Releases UI before each release. See [RELEASING.md](./RELEASING.md) for the
 > full process.
 
+> **AI feature convention (#298):** Entries that introduce or modify AI-assisted
+> features (cover art generation, description generation, lyric transcription,
+> translation, etc.) must be tagged with  at the start of the bullet,
+> e.g. . This helps end users
+> identify which features involve AI at a glance. Apply the tag consistently
+> going forward and retroactively to any AI-related entries once shipped.
+
 ---
 
 ## [Unreleased]
