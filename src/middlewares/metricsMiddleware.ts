@@ -19,7 +19,9 @@ export const metricsMiddleware: RequestHandler = (
 
   res.on('finish', () => {
     const durationMs = Date.now() - start;
-    const route = req.route?.path || req.originalUrl?.split('?')[0] || req.path;
+    const route = req.route?.path
+      ? `${req.baseUrl || ''}${req.route.path}`
+      : 'unmatched';
 
     httpRequestsTotal.inc({ method: req.method, route, status: res.statusCode });
     httpRequestDurationSeconds.observe(

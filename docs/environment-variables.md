@@ -77,8 +77,9 @@ Complete reference of all environment variables used by the AudioBlocks Backend.
 | `PRIVY_APP_ID`         | No       | —                       | Privy application ID                            |
 | `PRIVY_APP_SECRET`     | No       | —                       | Privy application secret                        |
 | `PRIVY_WEBHOOK_SECRET` | No       | —                       | Privy webhook signing secret (Issue #606)       |
+| `LISTENER_KEY_SALT`    | Yes*     | —                       | Secret salt for HMAC-SHA256 anonymization of listener IPs (required in production; Issue #793) |
 
-**Sensitive:** `JWT_SECRET`, `PRIVY_APP_SECRET`, `PRIVY_WEBHOOK_SECRET` — never log or commit.
+**Sensitive:** `JWT_SECRET`, `PRIVY_APP_SECRET`, `PRIVY_WEBHOOK_SECRET`, `LISTENER_KEY_SALT` — never log or commit.
 
 ---
 

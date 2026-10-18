@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { createHash } from 'crypto';
+import { generateListenerKey } from '../utils/listenerKey';
 import AppDataSource from '../config/db';
 import { Song } from '../entities/Song';
 import { SongPlayEvent } from '../entities/SongPlayEvent';
@@ -134,13 +134,9 @@ export class SongController {
         await songRepo.increment({ id: songId }, 'playCount', 1);
         // Record who listened so unique-listener statistics can be computed
         // per time window (Issue #87). Anonymous streams get a hashed IP key
-        // instead of storing the raw address.
+        // instead of storing the raw address (Issue #793: HMAC-SHA256 with LISTENER_KEY_SALT).
         const listenerId = (req as any).user?.id ?? null;
-        const listenerKey = listenerId
-          ? null
-          : createHash('sha256')
-              .update(`${req.ip ?? 'unknown'}:${process.env.LISTENER_KEY_SALT ?? ''}`)
-              .digest('hex');
+        const listenerKey = listenerId ? null : generateListenerKey(req.ip);
         await AppDataSource.getRepository(SongPlayEvent).insert({
           songId,
           listenerId,
