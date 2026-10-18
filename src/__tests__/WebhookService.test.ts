@@ -148,45 +148,61 @@ describe('WebhookService', () => {
   });
 
   describe('publish filtering', () => {
-    it('delivers only to subscriptions matching eventType', async () => {
-      const sub1 = {
-        id: '1',
-        endpoint: 'https://a.com/hook',
-        secret: 's1',
-        eventTypes: ['song.minted'],
-        isActive: true,
+    let qb: any;
+
+    beforeEach(() => {
+      qb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn(async () => []),
       };
-      const sub2 = {
-        id: '2',
-        endpoint: 'https://b.com/hook',
-        secret: 's2',
-        eventTypes: ['sale.completed'],
-        isActive: true,
-      };
-      const subAll = {
-        id: '3',
-        endpoint: 'https://c.com/hook',
-        secret: 's3',
-        eventTypes: ['*'],
-        isActive: true,
-      };
-      mockRepo.find.mockResolvedValue([sub1, sub2, subAll]);
+      mockRepo.createQueryBuilder = jest.fn(() => qb);
+    });
+
+    it('matches in SQL instead of loading all active subscriptions', async () => {
+      const svc = new WebhookService(fetchMock);
+      await svc.publish('song.minted', { songId: 's1' });
+
+      expect(mockRepo.find).not.toHaveBeenCalled();
+      expect(qb.where).toHaveBeenCalledWith('sub.isActive = true');
+      const [sql, params] = qb.andWhere.mock.calls[0];
+      // exact event type or the '*' wildcard
+      expect(sql).toContain(`sub."eventTypes" && ARRAY[:eventType, '*']::text[]`);
+      // empty array means all events
+      expect(sql).toContain('cardinality(sub."eventTypes") = 0');
+      // null (legacy rows) means all events
+      expect(sql).toContain('sub."eventTypes" IS NULL');
+      expect(params).toEqual({ eventType: 'song.minted' });
+    });
+
+    it('delivers to each subscription the query returns', async () => {
+      qb.getMany.mockResolvedValue([
+        { id: '1', endpoint: 'https://a.com/hook', secret: 's1', eventTypes: ['song.minted'] },
+        { id: '3', endpoint: 'https://c.com/hook', secret: 's3', eventTypes: ['*'] },
+        { id: '4', endpoint: 'https://d.com/hook', secret: 's4', eventTypes: [] },
+      ]);
       fetchMock.mockResolvedValue({ ok: true } as any);
 
       const svc = new WebhookService(fetchMock);
       await svc.publish('song.minted', { songId: 's1', title: 'Test' });
 
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
       expect(fetchMock).toHaveBeenCalledWith('https://a.com/hook', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://c.com/hook', expect.any(Object));
-      expect(fetchMock).not.toHaveBeenCalledWith('https://b.com/hook', expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://d.com/hook', expect.any(Object));
     });
 
     it('does nothing when no subscriptions match', async () => {
-      mockRepo.find.mockResolvedValue([]);
       fetchMock.mockResolvedValue({ ok: true } as any);
       const svc = new WebhookService(fetchMock);
       await svc.publish('song.minted', { songId: 's1' });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('does not throw when the query fails', async () => {
+      qb.getMany.mockRejectedValue(new Error('db down'));
+      const svc = new WebhookService(fetchMock);
+      await expect(svc.publish('song.minted', {})).resolves.toBeUndefined();
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });

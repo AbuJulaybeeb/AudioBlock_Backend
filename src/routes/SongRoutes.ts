@@ -11,6 +11,9 @@ import { SongController } from '../controllers/SongController';
 import { EmbedController } from '../controllers/EmbedController';
 import { SubmitSignedXdrDTO } from '../dtos/SubmitSignedXdrDTO';
 import { idempotency } from '../middlewares/idempotency';
+import { AddCollaboratorDTO } from '../dtos/AddCollaboratorDTO';
+import { UpdateCollaboratorDTO } from '../dtos/UpdateCollaboratorDTO';
+import { ApplyRoyaltyTemplateDTO } from '../dtos/ApplyRoyaltyTemplateDTO';
 
 const uploadController = new UploadController();
 const router = Router();
@@ -142,6 +145,27 @@ router.post(
   idempotency(),
   validateDTO(SubmitSignedXdrDTO),
   SongController.submitMint,
+);
+
+// Collaborator management (owner-only writes; credits are public to read)
+router.get('/:id/collaborators', SongController.listCollaborators);
+router.post(
+  '/:id/collaborators',
+  authArtistMiddleware,
+  validateDTO(AddCollaboratorDTO),
+  SongController.addCollaborator,
+);
+router.patch(
+  '/:id/collaborators/:userId',
+  authArtistMiddleware,
+  validateDTO(UpdateCollaboratorDTO),
+  SongController.updateCollaborator,
+);
+router.post(
+  '/:id/royalty-template',
+  authArtistMiddleware,
+  validateDTO(ApplyRoyaltyTemplateDTO),
+  SongController.applyTemplate,
 );
 
 // Collaborator dispute endpoints

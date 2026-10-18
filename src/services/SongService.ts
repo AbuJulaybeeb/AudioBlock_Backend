@@ -192,6 +192,10 @@ export class SongService {
       throw Object.assign(new Error('Not authorized to modify this song'), { statusCode: 403 });
     }
 
+    if (song.mintStatus === 'pending' || song.mintStatus === 'minted') {
+      throw AppError.conflict('Royalty splits cannot be changed after minting');
+    }
+
     const templateRepo = AppDataSource.getRepository(RoyaltyTemplate);
     const template = await templateRepo.findOneBy({ id: templateId });
     if (!template) {
