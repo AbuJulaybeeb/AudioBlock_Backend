@@ -31,6 +31,8 @@ export interface ValidatedEnv {
   AI_TIMEOUT_MS: string;
   // #291 — data retention controls
   AI_DATA_RETENTION_OPT_OUT: string;
+  // #793 — anonymous listener IP HMAC salt
+  LISTENER_KEY_SALT?: string;
 }
 
 const requiredVars: (keyof ValidatedEnv)[] = [
@@ -62,6 +64,16 @@ export function validateEnvironment(): ValidatedEnv {
       missing.push(varName);
     }
   });
+
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.LISTENER_KEY_SALT) {
+      missing.push('LISTENER_KEY_SALT');
+    }
+  } else if (!process.env.LISTENER_KEY_SALT && process.env.NODE_ENV !== 'test') {
+    console.warn(
+      '⚠️  LISTENER_KEY_SALT is not set. Anonymous listener IP hashing is vulnerable in production. Set LISTENER_KEY_SALT in your .env file.',
+    );
+  }
 
   if (missing.length > 0) {
     console.error('❌ Missing required environment variables:');
@@ -102,6 +114,8 @@ export function validateEnvironment(): ValidatedEnv {
     AI_TIMEOUT_MS: process.env.AI_TIMEOUT_MS || '10000',
     // #291 — data retention opt-out
     AI_DATA_RETENTION_OPT_OUT: process.env.AI_DATA_RETENTION_OPT_OUT || 'false',
+    // #793 — anonymous listener IP HMAC salt
+    LISTENER_KEY_SALT: process.env.LISTENER_KEY_SALT,
   };
 }
 
