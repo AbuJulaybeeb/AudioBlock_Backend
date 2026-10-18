@@ -47,12 +47,17 @@ export class AccountTypeController {
         );
       }
 
-      const updatedUser = await this.accountTypeService.setAccountType(
-        user.id,
-        dto.accountType,
-        {
-          artistName: dto.ar
- {
+      const updatedUser = await this.accountTypeService.setAccountType(user.id, dto.accountType, {
+        artistName: dto.artistName,
+        bio: dto.bio,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Account type updated successfully',
+        user: updatedUser,
+      });
+    } catch (error) {
       handleError(req, res, error);
     }
   };
@@ -126,4 +131,3 @@ export class AccountTypeController {
     }
   };
 }
-

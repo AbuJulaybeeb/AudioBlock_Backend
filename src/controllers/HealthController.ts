@@ -23,6 +23,7 @@ import AppDataSource from '../config/db';
 import redis from '../config/redis';
 import logger from '../config/logger';
 import { getPoolStats } from '../services/DbPoolMonitor';
+import { getWorkerHealthStatus, WorkerHealthStatus } from '../workers/SongProcessorWorker';
 
 const HEALTH_CHECK_TIMEOUT_MS = 5000;
 
@@ -146,9 +147,24 @@ export class HealthController {
     res.status(healthy ? 200 : 503).json(report);
   };
 
-  /** Full health report (admin only): dependencies + pool stats + process info. */
+  /** Worker liveness and stale consumer health check (Issue #356) */
+  static worker = async (req: Request, res: Response) => {
+    const thresholdParam = req.query.staleThresholdMs
+      ? parseInt(req.query.staleThresholdMs as string, 10)
+      : undefined;
+
+    const workerStatus: WorkerHealthStatus = await getWorkerHealthStatus(thresholdParam);
+    const healthy = workerStatus.status === 'ok' || workerStatus.status === 'not_configured';
+
+    res.status(healthy ? 200 : 503).json(workerStatus);
+  };
+
+  /** Full health report (admin only): dependencies + pool stats + process info + worker. */
   static detailed = async (_req: Request, res: Response) => {
-    const dependencies = await checkDependencies();
+    const [dependencies, worker] = await Promise.all([
+      checkDependencies(),
+      getWorkerHealthStatus(),
+    ]);
     const healthy = isHealthy(dependencies);
 
     res.status(healthy ? 200 : 503).json({
@@ -156,6 +172,7 @@ export class HealthController {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       dependencies,
+      worker,
       dbPool: getPoolStats(AppDataSource),
       memory: process.memoryUsage(),
       env: process.env.NODE_ENV || 'development',

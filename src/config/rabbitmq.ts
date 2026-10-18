@@ -74,8 +74,15 @@ export async function initRabbitMQ(): Promise<void> {
   await connect();
 }
 
+export const MAIN_QUEUE = 'song_processing';
+export const DLQ = 'song_processing_dlq';
+
 export function getChannel(): amqp.Channel {
   if (!channel) throw new Error('RabbitMQ not initialized');
+  return channel;
+}
+
+export function getRawChannel(): amqp.Channel | null {
   return channel;
 }
 

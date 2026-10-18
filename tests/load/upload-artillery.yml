@@ -1,0 +1,46 @@
+config:
+  target: "{{ $processEnvironment.BASE_URL || 'http://localhost:3000' }}"
+  processor: "./upload-processor.js"
+  phases:
+    - name: "Warm-up"
+      duration: 15
+      arrivalRate: 2
+    - name: "Ramp-up Concurrent Artists"
+      duration: 30
+      arrivalRate: 2
+      rampTo: 10
+    - name: "Sustained Upload Load"
+      duration: 30
+      arrivalRate: 10
+    - name: "Cool-down"
+      duration: 10
+      arrivalRate: 2
+  defaults:
+    headers:
+      Authorization: "Bearer {{ $processEnvironment.ARTIST_TOKEN || '' }}"
+  ensure:
+    p95: 3500
+    p99: 6000
+    maxErrorRate: 5
+
+scenarios:
+  - name: "Chunked Upload and Finalize Flow"
+    flow:
+      - log: "Beginning upload simulation for artist"
+      - post:
+          url: "/api/song/upload/chunk"
+          beforeRequest: "setupUploadChunk"
+      - post:
+          url: "/api/song/upload/finalize"
+          json:
+            fileId: "{{ fileId }}"
+            totalChunks: 1
+            title: "Artillery Load Test Song"
+            description: "Concurrent upload load benchmark"
+            genre: "Afrobeats"
+            coverArtPath: "covers/default_cover.png"
+            composers: "Artillery Benchmarker"
+          headers:
+            Idempotency-Key: "finalize-artillery-{{ fileId }}"
+          expect:
+            - statusCode: 201

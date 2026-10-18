@@ -1,8 +1,8 @@
 import { getChannel, MAIN_QUEUE, DLQ } from '../config/rabbitmq';
-import { AppDataSource } from '../config/data-source';
+import AppDataSource from '../config/db';
 import { Song } from '../entities/Song';
 import { TransactionLogService } from '../services/TransactionLogService';
-import { SongVersionService } from '../services/SongVersionService';
+import { SongVersionService } from '../services/Song/SongVersionService';
 import { PinataService } from '../services/PinataService';
 import { SorobanService } from '../services/Soroban/SorobanService';
 import logger from '../config/logger';
@@ -13,7 +13,9 @@ import axios from 'axios';
 import ffmpeg from 'fluent-ffmpeg';
 import { S3 } from 'aws-sdk';
 
-const songRepo = AppDataSource.getRepository(Song);
+function getSongRepo() {
+  return AppDataSource.getRepository(Song);
+}
 const MAX_ATTEMPTS = 3;
 const s3 = new S3({ region: process.env.AWS_REGION });
 
@@ -98,8 +100,8 @@ async function buildMetadata(song: Song, coverCid: string, masterUrl: string) {
         : []),
       // Present whenever any AI content was accepted (#283).
       ...(song.aiDescriptionApproved ||
-        (song.aiGeneratedCoverUrl && song.aiDescriptionApproved) ||
-        (song.aiLyricTranscription && song.aiDescriptionApproved)
+      (song.aiGeneratedCoverUrl && song.aiDescriptionApproved) ||
+      (song.aiLyricTranscription && song.aiDescriptionApproved)
         ? [{ trait_type: 'ai_assisted', value: 'true' }]
         : []),
     ],
@@ -115,7 +117,7 @@ async function processSongMessage(
   versionService: SongVersionService,
 ): Promise<void> {
   const { songId, fileId } = payload;
-  const song = await songRepo.findOne({ where: { id: songId }, relations: ['user'] });
+  const song = await getSongRepo().findOne({ where: { id: songId }, relations: ['user'] });
   if (!song) throw new Error('Song not found');
 
   const localFile = path.join('uploads/merged', `${fileId}.mp3`);
@@ -183,6 +185,186 @@ function handleFailure(channel: any, msg: any, payload: SongPayload, error: unkn
   }
 }
 
+export interface WorkerHealthStatus {
+  status: 'ok' | 'degraded' | 'error' | 'not_configured';
+  connected: boolean;
+  isConsuming: boolean;
+  consumerTag: string | null;
+  lastJobProcessedAt: string | null;
+  lastJobStartedAt: string | null;
+  jobsProcessedCount: number;
+  jobsFailedCount: number;
+  pendingJobsCount: number;
+  activeConsumersCount: number;
+  isStale: boolean;
+  staleThresholdMs: number;
+  uptimeSeconds: number;
+  startedAt: string | null;
+  message?: string;
+}
+
+// In-memory worker telemetry state
+let workerStartedAt: Date | null = null;
+let isConsuming = false;
+let consumerTag: string | null = null;
+let lastJobProcessedAt: Date | null = null;
+let lastJobStartedAt: Date | null = null;
+let jobsProcessedCount = 0;
+let jobsFailedCount = 0;
+
+// eslint-disable-next-line complexity, max-lines-per-function
+export async function getWorkerHealthStatus(
+  customThresholdMs?: number,
+): Promise<WorkerHealthStatus> {
+  const staleThresholdMs =
+    customThresholdMs ?? parseInt(process.env.WORKER_STALE_THRESHOLD_MS || '300000', 10); // 5 min default
+
+  const uptimeSeconds = workerStartedAt
+    ? Math.floor((Date.now() - workerStartedAt.getTime()) / 1000)
+    : 0;
+
+  if (!process.env.RABBITMQ_URL) {
+    return {
+      status: 'not_configured',
+      connected: false,
+      isConsuming: false,
+      consumerTag: null,
+      lastJobProcessedAt: null,
+      lastJobStartedAt: null,
+      jobsProcessedCount: 0,
+      jobsFailedCount: 0,
+      pendingJobsCount: 0,
+      activeConsumersCount: 0,
+      isStale: false,
+      staleThresholdMs,
+      uptimeSeconds: 0,
+      startedAt: null,
+      message: 'RABBITMQ_URL is not configured',
+    };
+  }
+
+  let channel: any = null;
+  try {
+    channel = getChannel();
+  } catch {
+    channel = null;
+  }
+
+  if (!channel) {
+    return {
+      status: 'error',
+      connected: false,
+      isConsuming: false,
+      consumerTag,
+      lastJobProcessedAt: lastJobProcessedAt ? lastJobProcessedAt.toISOString() : null,
+      lastJobStartedAt: lastJobStartedAt ? lastJobStartedAt.toISOString() : null,
+      jobsProcessedCount,
+      jobsFailedCount,
+      pendingJobsCount: 0,
+      activeConsumersCount: 0,
+      isStale: false,
+      staleThresholdMs,
+      uptimeSeconds,
+      startedAt: workerStartedAt ? workerStartedAt.toISOString() : null,
+      message: 'RabbitMQ channel is disconnected or unavailable',
+    };
+  }
+
+  let pendingJobsCount = 0;
+  let activeConsumersCount = 0;
+
+  try {
+    const queueInfo = await channel.checkQueue(MAIN_QUEUE);
+    pendingJobsCount = queueInfo.messageCount;
+    activeConsumersCount = queueInfo.consumerCount;
+  } catch (err: any) {
+    return {
+      status: 'error',
+      connected: true,
+      isConsuming,
+      consumerTag,
+      lastJobProcessedAt: lastJobProcessedAt ? lastJobProcessedAt.toISOString() : null,
+      lastJobStartedAt: lastJobStartedAt ? lastJobStartedAt.toISOString() : null,
+      jobsProcessedCount,
+      jobsFailedCount,
+      pendingJobsCount: 0,
+      activeConsumersCount: 0,
+      isStale: false,
+      staleThresholdMs,
+      uptimeSeconds,
+      startedAt: workerStartedAt ? workerStartedAt.toISOString() : null,
+      message: `Failed to inspect queue: ${err?.message || 'unknown error'}`,
+    };
+  }
+
+  // Stale consumer detection logic (Issue #356)
+  let isStale = false;
+  let status: 'ok' | 'degraded' | 'error' = 'ok';
+  let message = 'Worker consumer is healthy and active';
+
+  if (activeConsumersCount === 0) {
+    status = 'error';
+    isStale = pendingJobsCount > 0;
+    message = `No active consumers on queue '${MAIN_QUEUE}' (${pendingJobsCount} jobs pending)`;
+  } else if (pendingJobsCount > 0) {
+    const baseline = lastJobProcessedAt || lastJobStartedAt || workerStartedAt;
+    const timeSinceActivity = baseline ? Date.now() - baseline.getTime() : Infinity;
+
+    if (timeSinceActivity > staleThresholdMs) {
+      isStale = true;
+      status = 'degraded';
+      const minutes = Math.floor(timeSinceActivity / 60000);
+      message = `Stale consumer: ${pendingJobsCount} jobs pending and no job processed in ${minutes} minutes`;
+    }
+  }
+
+  return {
+    status,
+    connected: true,
+    isConsuming: activeConsumersCount > 0,
+    consumerTag,
+    lastJobProcessedAt: lastJobProcessedAt ? lastJobProcessedAt.toISOString() : null,
+    lastJobStartedAt: lastJobStartedAt ? lastJobStartedAt.toISOString() : null,
+    jobsProcessedCount,
+    jobsFailedCount,
+    pendingJobsCount,
+    activeConsumersCount,
+    isStale,
+    staleThresholdMs,
+    uptimeSeconds,
+    startedAt: workerStartedAt ? workerStartedAt.toISOString() : null,
+    message,
+  };
+}
+
+export function resetWorkerHealthForTests(): void {
+  workerStartedAt = null;
+  isConsuming = false;
+  consumerTag = null;
+  lastJobProcessedAt = null;
+  lastJobStartedAt = null;
+  jobsProcessedCount = 0;
+  jobsFailedCount = 0;
+}
+
+export function setWorkerHealthStateForTests(state: {
+  startedAt?: Date | null;
+  isConsuming?: boolean;
+  consumerTag?: string | null;
+  lastJobProcessedAt?: Date | null;
+  lastJobStartedAt?: Date | null;
+  jobsProcessedCount?: number;
+  jobsFailedCount?: number;
+}): void {
+  if (state.startedAt !== undefined) workerStartedAt = state.startedAt;
+  if (state.isConsuming !== undefined) isConsuming = state.isConsuming;
+  if (state.consumerTag !== undefined) consumerTag = state.consumerTag;
+  if (state.lastJobProcessedAt !== undefined) lastJobProcessedAt = state.lastJobProcessedAt;
+  if (state.lastJobStartedAt !== undefined) lastJobStartedAt = state.lastJobStartedAt;
+  if (state.jobsProcessedCount !== undefined) jobsProcessedCount = state.jobsProcessedCount;
+  if (state.jobsFailedCount !== undefined) jobsFailedCount = state.jobsFailedCount;
+}
+
 export async function startSongWorker() {
   try {
     const channel = getChannel();
@@ -192,9 +374,10 @@ export async function startSongWorker() {
     await channel.assertQueue(MAIN_QUEUE, { durable: true });
     await channel.assertQueue(DLQ, { durable: true });
 
+    workerStartedAt = new Date();
     logger.info(`🎵 Waiting for messages in queue: ${MAIN_QUEUE} (max attempts: ${MAX_ATTEMPTS})`);
 
-    channel.consume(MAIN_QUEUE, async (msg) => {
+    const consumeResult = await channel.consume(MAIN_QUEUE, async (msg) => {
       if (!msg) return;
 
       const payload = parsePayload(msg.content.toString());
@@ -210,14 +393,25 @@ export async function startSongWorker() {
         `Processing song (attempt ${attempt}/${MAX_ATTEMPTS})`,
       );
 
+      lastJobStartedAt = new Date();
+
       try {
         await processSongMessage(payload, logService, versionService);
+        lastJobProcessedAt = new Date();
+        jobsProcessedCount++;
         channel.ack(msg);
       } catch (error) {
+        jobsFailedCount++;
         handleFailure(channel, msg, payload, error);
       }
     });
+
+    if (consumeResult && consumeResult.consumerTag) {
+      consumerTag = consumeResult.consumerTag;
+      isConsuming = true;
+    }
   } catch (error) {
+    isConsuming = false;
     logger.error({ err: error }, 'Failed to start song worker');
   }
 }

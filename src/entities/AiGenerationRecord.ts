@@ -45,7 +45,6 @@ export class AiGenerationRecord {
 
   @Column({ type: 'timestamp', nullable: true })
   completedAt?: Date;
-}
 
   /**
    * Estimated cost of this AI call in USD (issue #277). Set at request time

@@ -34,6 +34,7 @@ import subgraphRoutes from "./routes/subgraphRoutes";
 import metricsRoutes from "./routes/metricsRoutes";
 import privyWebhookRoutes from "./routes/privyWebhookRoutes";
 import accountTypeRoutes from "./routes/accountTypeRoutes";
+import healthRoutes from "./routes/healthRoutes";
 
 // Route imports
 
@@ -98,9 +99,7 @@ app.use((req, res, next) => {
 
 
 // Define routes
-app.use("/health", (req, res) => {
-  res.json({ status: "ok" });
-});
+app.use("/health", healthRoutes);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/artist", artistRoutes);
