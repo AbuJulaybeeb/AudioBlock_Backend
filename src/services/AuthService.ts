@@ -64,9 +64,6 @@ export class AuthService {
       profileImage: user.profileImage,
       name: user.name,
       rewardPoints: user.rewardPoints,
-      totalStreams: user.totalStreams,
-      totalStreamTime: user.totalStreamTime,
-      uniqueListeners: user.uniqueListeners,
       emailVerified: user.emailVerified ?? (user.passwordHash ? false : undefined),
     };
 

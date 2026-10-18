@@ -36,6 +36,7 @@ function makeRepoStub(results: { counts?: number[]; rawOne?: unknown[]; rawMany?
   const qb: any = {
     select: jest.fn(() => qb),
     addSelect: jest.fn(() => qb),
+    innerJoin: jest.fn(() => qb),
     where: jest.fn(() => qb),
     andWhere: jest.fn(() => qb),
     groupBy: jest.fn(() => qb),
@@ -262,5 +263,40 @@ describe('SongStatsService.getArtistStats', () => {
     await expect(new SongStatsService().getArtistStats('artist-x', '7d')).rejects.toMatchObject({
       statusCode: 404,
     });
+  });
+});
+
+describe('SongStatsService.getArtistLifetimeTotals (#807)', () => {
+  it('derives streams, stream time and unique listeners from play events', async () => {
+    songRepo.find.mockResolvedValue([{ id: 'song-1' }, { id: 'song-2' }]);
+    playRepo = makeRepoStub({
+      counts: [5],
+      rawOne: [{ total: '900' }],
+      rawMany: [
+        [
+          { listenerId: 'u1', listenerKey: null },
+          { listenerId: 'u1', listenerKey: null },
+          { listenerId: null, listenerKey: 'k1' },
+        ],
+      ],
+    });
+    wireRepos();
+
+    const totals = await new SongStatsService().getArtistLifetimeTotals('artist-1');
+
+    expect(totals).toEqual({ totalStreams: 5, totalStreamTime: 900, uniqueListeners: 2 });
+    expect(CacheService.set).toHaveBeenCalledWith(
+      'stats:artist:artist-1:lifetime',
+      totals,
+      STATS_CACHE_TTL_MS,
+    );
+  });
+
+  it('returns zeros for an artist with no songs', async () => {
+    songRepo.find.mockResolvedValue([]);
+
+    const totals = await new SongStatsService().getArtistLifetimeTotals('artist-2');
+
+    expect(totals).toEqual({ totalStreams: 0, totalStreamTime: 0, uniqueListeners: 0 });
   });
 });

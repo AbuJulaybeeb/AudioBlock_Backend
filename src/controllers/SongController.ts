@@ -1,4 +1,9 @@
 import { Request, Response } from 'express';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { ListSongsQueryDTO } from '../dtos/ListSongsQueryDTO';
+import { formatValidationErrors } from '../middlewares/validate';
+import { routeParam } from '../utils/routeParams';
 import { generateListenerKey } from '../utils/listenerKey';
 import AppDataSource from '../config/db';
 import { Song } from '../entities/Song';
@@ -30,18 +35,8 @@ const coverArtService = new CoverArtService();
 export class SongController {
   static getSong = async (req: Request, res: Response) => {
     try {
-      const song = await songService.getSong(req.params.id as string);
+      const song = await songService.getSongView(routeParam(req.params.id), (req as any).user?.id);
       return res.status(200).json({ success: true, data: song });
-    } catch (error) {
-      handleError(req, res, error);
-    }
-  };
-
-  static createSong = async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id;
-      const song = await songService.createSong(req.body, userId);
-      return res.status(201).json({ success: true, data: song });
     } catch (error) {
       handleError(req, res, error);
     }
@@ -67,8 +62,15 @@ export class SongController {
 
   static listSongs = async (req: Request, res: Response) => {
     try {
-      const songs = await songService.listSongs(req.query);
-      return res.status(200).json({ success: true, data: songs });
+      const query = plainToInstance(ListSongsQueryDTO, req.query, {
+        enableImplicitConversion: true,
+      });
+      const errors = await validate(query);
+      if (errors.length > 0) {
+        throw AppError.validation('Validation failed', formatValidationErrors(errors));
+      }
+      const result = await songService.listSongs(query, (req as any).user?.id);
+      return res.status(200).json({ success: true, ...result });
     } catch (error) {
       handleError(req, res, error);
     }

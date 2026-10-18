@@ -59,6 +59,14 @@ export function isLegacyFallbackEnabled(): boolean {
   return (process.env.PRIVY_ALLOW_LEGACY_FALLBACK || 'true').toLowerCase() === 'true';
 }
 
+/**
+ * Whether the legacy EVM wallet-signature login and Dynamic Labs wallet routes
+ * are reachable (Issue #809). Off unless `ENABLE_LEGACY_EVM_AUTH=true`.
+ */
+export function isLegacyEvmAuthEnabled(): boolean {
+  return (process.env.ENABLE_LEGACY_EVM_AUTH || 'false').trim().toLowerCase() === 'true';
+}
+
 /** Whether Privy is usable at all — i.e. an app id is configured. */
 export function isPrivyConfigured(): boolean {
   return Boolean((process.env.PRIVY_APP_ID || '').trim());

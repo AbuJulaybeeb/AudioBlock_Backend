@@ -90,8 +90,184 @@ paths:
                       $ref: '#/components/schemas/IndexedEvent'
                   pagination:
                     $ref: '#/components/schemas/Pagination'
+  /api/song:
+    get:
+      summary: List songs
+      description: Filtered, paginated song listing. Public callers only receive ready, unflagged songs. An artist listing their own songs (artistId equal to the caller) receives every status and may filter by status.
+      parameters:
+        - name: artistId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: genreId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: tag
+          in: query
+          required: false
+          description: Tag slug.
+          schema:
+            type: string
+        - name: mintStatus
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [not_minted, pending, minted, failed]
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [newest, popular, title]
+            default: newest
+        - name: status
+          in: query
+          required: false
+          description: Owner only. Returns 403 when artistId is not the caller.
+          schema:
+            type: string
+            enum: [processing, ready, failed]
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: A paginated list of songs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Song'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '400':
+          description: Invalid query parameter.
+        '403':
+          description: The status filter was used on songs the caller does not own.
+  /api/song/{id}:
+    get:
+      summary: Get a song
+      description: Returns one song. Flagged, taken-down and not-ready songs return 404 unless the caller is the owning artist, who also receives errorReason. Supports ETag and If-None-Match.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The song.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Song'
+        '304':
+          description: Not modified.
+        '400':
+          description: The id is not a UUID.
+        '404':
+          description: Song not found or not visible to the caller.
 components:
   schemas:
+    Song:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        artist:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+              format: uuid
+            username:
+              type: string
+              nullable: true
+            name:
+              type: string
+              nullable: true
+            profileImage:
+              type: string
+              nullable: true
+        cover:
+          type: object
+          properties:
+            path:
+              type: string
+            thumbnails:
+              type: object
+              nullable: true
+              additionalProperties:
+                type: string
+        genre:
+          type: string
+          nullable: true
+        genreId:
+          type: string
+          nullable: true
+        duration:
+          type: integer
+          nullable: true
+        playCount:
+          type: integer
+        status:
+          type: string
+          enum: [processing, ready, failed]
+        mintStatus:
+          type: string
+          enum: [not_minted, pending, minted, failed]
+        onChainSongId:
+          type: string
+          nullable: true
+        onChainTokenId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        errorReason:
+          type: string
+          nullable: true
+          description: Only present for the owning artist.
     IndexedEvent:
       type: object
       properties:

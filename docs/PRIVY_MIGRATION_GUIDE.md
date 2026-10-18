@@ -264,6 +264,28 @@ Exact names are defined by #595; expected set:
 Update `docs/environment-variables.md` and `.env.example` in the same PR that
 introduces them.
 
+### 8.1 `ENABLE_LEGACY_EVM_AUTH` (legacy EVM / Dynamic Labs kill switch)
+
+| Variable                 | Default | Effect                                                                                      |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------------- |
+| `ENABLE_LEGACY_EVM_AUTH` | `false` | When not `true`, the EVM wallet-signature endpoints and Dynamic wallet routes return `410`. |
+
+Gated routes (each answers `410 Gone` with a hint to use Privy or email login):
+
+- `GET /api/auth/nonce/:email`, `POST /api/auth/register`,
+  `POST /api/auth/register-listener`, `POST /api/auth/login`
+- `POST /api/wallet/evm/create`, `POST /api/wallet/evm/signMessage`
+
+Email + password, Privy and Stellar flows are unaffected by the flag. With the
+flag off, `ethers` and the Dynamic Labs SDK are loaded lazily and so are not
+imported at startup.
+
+Timeline: the flag ships defaulting to `false`. Set it to `true` only to roll
+back while legacy usage is being confirmed. Once usage is confirmed to be zero,
+a follow-up change removes the gated routes, `src/services/Dynamic/`,
+`src/config/dynamic.ts`, `src/utils/dynamicUtils.ts`, the Diamond facet ABIs in
+`src/abis/` and the `ethers` dependency.
+
 ## 9. Testing and validation
 
 - [ ] Unit tests for token verification middleware, including expired, wrong
