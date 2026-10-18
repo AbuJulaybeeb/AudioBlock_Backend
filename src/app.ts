@@ -30,7 +30,6 @@ import aiStudioRoutes from "./routes/aiStudioRoutes";
 import activityRoutes from "./routes/activityRoutes";
 import activityStreamRoutes from "./routes/activityStreamRoutes";
 import accountRoutes from "./routes/accountRoutes";
-import subgraphRoutes from "./routes/subgraphRoutes";
 import metricsRoutes from "./routes/metricsRoutes";
 import privyWebhookRoutes from "./routes/privyWebhookRoutes";
 import accountTypeRoutes from "./routes/accountTypeRoutes";
@@ -167,8 +166,6 @@ app.use("/api", privyWebhookRoutes);
 
 // Account type management: artist vs listener distinction (#616)
 app.use("/api", accountTypeRoutes);
-
-app.use("/api/subgraph", subgraphRoutes);
 
 app.use("/metrics", metricsRoutes);
 
