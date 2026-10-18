@@ -20,10 +20,22 @@ export class PrivyWebhookController {
   private dataSource: DataSource;
 
   constructor() {
-    this.webhookService = new PrivyWebhookService();
+    this.webhookService = new PrivyWebhookService(
+      process.env.PRIVY_WEBHOOK_SECRET ||
+        process.env.PRIVY_APP_SECRET ||
+        'development-webhook-secret',
+    );
     this.userResolver = new PrivyUserResolver();
-    this.userService = new UserService(
-ch (eventType) {
+    this.userService = new UserService();
+    this.dataSource = AppDataSource;
+  }
+
+  handleWebhook = async (req: Request, res: Response) => {
+    try {
+      const event = req.body;
+      const eventType = event?.type;
+
+      switch (eventType) {
         case 'user.created':
           await this.handleUserCreated(event);
           break;
@@ -184,10 +196,7 @@ ch (eventType) {
         if (!user.walletAddress) {
           user.walletAddress = address;
           updated = true;
-          logger.info(
-            { privyUserId, walletAddress: address, chainType },
-            'Linked external wallet',
-          );
+          logger.info({ privyUserId, walletAddress: address, chainType }, 'Linked external wallet');
         }
       }
     }
@@ -201,7 +210,10 @@ ch (eventType) {
       user.twitterVerified = linkedAccount.verified || false;
       user.twitterConnected = true;
       updated = true;
-      logger.info({ privyUserId, twitterUsername: linkedAccount.username }, 'Linked Twitter account');
+      logger.info(
+        { privyUserId, twitterUsername: linkedAccount.username },
+        'Linked Twitter account',
+      );
     }
 
     // Handle Google account linking (Issue #610)
@@ -219,4 +231,3 @@ ch (eventType) {
     }
   }
 }
-

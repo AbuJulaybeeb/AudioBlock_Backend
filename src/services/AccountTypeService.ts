@@ -43,11 +43,7 @@ export class AccountTypeService {
 
     // Validate account type
     if (accountType !== UserRole.ARTIST && accountType !== UserRole.LISTENER) {
-      throw AppError.validation(
-        'Invalid accoun
-ntent. Please delete all your content first.',
-        );
-      }
+      throw AppError.validation('Invalid account type. Must be artist or listener.');
     }
 
     // Update user role
@@ -185,4 +181,3 @@ ntent. Please delete all your content first.',
     );
   }
 }
-

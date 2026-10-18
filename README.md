@@ -669,7 +669,19 @@ Additional in-repo docs live under [`docs/`](docs/):
 
 ## Getting Started
 
-### With Docker (recommended)
+### One-Command Local Bootstrap (Recommended)
+
+To spin up container dependencies (PostgreSQL, Redis, RabbitMQ), apply pending schema migrations, seed genres, and populate representative test accounts (admin, artists, listeners, albums, tracks) in one step (Issue #369):
+
+```bash
+cp .env.example .env
+npm run dev:bootstrap
+npm run dev
+```
+
+This command is **100% idempotent** — running it multiple times safely re-verifies schema and seeds without duplicate errors.
+
+### With Docker (Manual)
 
 ```bash
 git clone <repo-url>
@@ -747,6 +759,9 @@ npm run dev
 | `npm test`                                            | Runs the full Jest suite (`src/__tests__/**/*.test.ts`)                                                                         |
 | `npm test -- src/__tests__/health.test.ts`            | Runs a single test file (swap in any path under `src/__tests__`)                                                                |
 | `npm run test:watch`                                  | Runs Jest in watch mode                                                                                                         |
+| `npm run dev:bootstrap`                               | Bootstraps Docker dependencies, runs migrations, seeds genres and test accounts (Issue #369)                                    |
+| `npm run test:load:stream`                            | Runs streaming endpoint load test (Issue #370, see `docs/LOAD_TESTING.md`)                                                      |
+| `npm run test:load:upload`                            | Runs chunked upload & finalize endpoint load test (Issue #371, see `docs/LOAD_TESTING.md`)                                      |
 | `npm run compose:check`                               | Validates that all docker-compose files are mutually consistent (Issue #404)                                                    |
 | `npm run env:check`                                   | Checks that `.env.example` lists every required var from `src/config/env.ts` (reports both missing and extra keys)              |
 | `npm run env:check:strict`                            | Same as above but fails on any extra key in `.env.example` (exact parity)                                                       |

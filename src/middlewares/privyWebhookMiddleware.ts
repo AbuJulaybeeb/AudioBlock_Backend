@@ -75,3 +75,5 @@ export function verifyPrivyWebhookSignature(req: Request, res: Response, next: N
     return handleError(req, res, AppError.authentication('Failed to verify webhook signature'));
   }
 }
+
+export const verifyPrivyWebhook = verifyPrivyWebhookSignature;

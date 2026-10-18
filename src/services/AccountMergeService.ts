@@ -51,7 +51,19 @@ export class AccountMergeService {
         .createQueryBuilder('u')
         .where('u.walletAddress = :walletAddress', { walletAddress: user.walletAddress })
         .andWhere('u.id != :userId', { userId })
-: Promise<MergeResult> {
+        .andWhere('u.deletedAt IS NULL')
+        .getMany();
+      duplicates.push(...walletMatches);
+    }
+
+    return duplicates;
+  }
+
+  async mergeAccounts(
+    primaryUserId: string,
+    secondaryUserId: string,
+    req: Request,
+  ): Promise<MergeResult> {
     if (primaryUserId === secondaryUserId) {
       throw AppError.validation('Cannot merge an account with itself');
     }
@@ -82,8 +94,7 @@ export class AccountMergeService {
 
       // Merge Privy ID if primary doesn't have one
       if (!primaryUser.privyUserId && secondaryUser.privyUserId) {
-        primaryUser.privyUserId = secondar
-yUser.privyUserId;
+        primaryUser.privyUserId = secondaryUser.privyUserId;
         mergedFields.push('privyUserId');
       }
 

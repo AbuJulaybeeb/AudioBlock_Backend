@@ -1,0 +1,33 @@
+config:
+  target: "{{ $processEnvironment.BASE_URL || 'http://localhost:3000' }}"
+  phases:
+    - name: "Warm-up"
+      duration: 20
+      arrivalRate: 5
+    - name: "Ramp-up"
+      duration: 30
+      arrivalRate: 5
+      rampTo: 50
+    - name: "Sustained Peak Load"
+      duration: 40
+      arrivalRate: 50
+    - name: "Cool-down"
+      duration: 10
+      arrivalRate: 5
+  defaults:
+    headers:
+      Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*"
+  ensure:
+    p95: 250
+    p99: 500
+    maxErrorRate: 1
+
+scenarios:
+  - name: "HLS Stream Manifest Fetch"
+    flow:
+      - get:
+          url: "/api/song/stream/{{ $processEnvironment.SONG_ID || '00000000-0000-0000-0000-000000000001' }}"
+          headers:
+            User-Agent: "AudioBlock-ArtilleryLoadTest/1.0"
+          expect:
+            - statusCode: 200

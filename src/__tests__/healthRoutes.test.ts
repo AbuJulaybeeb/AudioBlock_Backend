@@ -15,10 +15,11 @@ describe('healthRoutes', () => {
   const routeLayer = (path: string) =>
     (healthRoutes as any).stack.find((layer: any) => layer.route?.path === path);
 
-  it('exposes /live, /ready and /detailed', () => {
+  it('exposes /live, /ready, /detailed and /worker', () => {
     expect(routeLayer('/live')).toBeDefined();
     expect(routeLayer('/ready')).toBeDefined();
     expect(routeLayer('/detailed')).toBeDefined();
+    expect(routeLayer('/worker')).toBeDefined();
   });
 
   it('gates /detailed behind an auth/role-check middleware before the controller', () => {
@@ -27,8 +28,9 @@ describe('healthRoutes', () => {
     expect(layer.route.stack.length).toBe(2);
   });
 
-  it('does not gate /live or /ready behind extra middleware', () => {
+  it('does not gate /live, /ready, or /worker behind extra middleware', () => {
     expect(routeLayer('/live').route.stack.length).toBe(1);
     expect(routeLayer('/ready').route.stack.length).toBe(1);
+    expect(routeLayer('/worker').route.stack.length).toBe(1);
   });
 });

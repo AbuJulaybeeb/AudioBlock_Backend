@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --trace-warnings --transpile-only src/index.ts",
+    "dev:bootstrap": "ts-node --transpile-only scripts/dev-bootstrap.ts",
     "worker": "ts-node src/workers/SongProcessorWorker.ts",
     "worker:indexer": "ts-node src/workers/indexer/index.ts",
     "indexer": "ts-node src/workers/indexer/index.ts",
@@ -37,7 +38,9 @@
     "env:check": "node scripts/check-env-example.js",
     "env:check:strict": "node scripts/check-env-example.js --strict",
     "ai:test-isolation": "node scripts/check-ai-test-isolation.js",
-    "benchmark:ai": "ts-node --transpile-only scripts/load-test-ai-concurrency.ts"
+    "benchmark:ai": "ts-node --transpile-only scripts/load-test-ai-concurrency.ts",
+    "test:load:stream": "ts-node --transpile-only scripts/load-test-streaming.ts",
+    "test:load:upload": "ts-node --transpile-only scripts/load-test-chunked-upload.ts"
   },
   "lint-staged": {
     "*.ts": [
