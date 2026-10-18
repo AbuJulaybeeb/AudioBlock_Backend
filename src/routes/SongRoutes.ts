@@ -3,7 +3,7 @@ import { UploadController } from '../controllers/UploadController';
 import { validateDTO } from '../middlewares/validate';
 import { FinalizeUploadDTO } from '../dtos/FinalizeUploadDTO';
 import { UploadChunkDTO } from '../dtos/UploadChunkDTO';
-import { authArtistMiddleware } from '../middlewares/authMiddleware';
+import { authArtistMiddleware, requireAuth } from '../middlewares/authMiddleware';
 import multer from 'multer';
 import { CreateCoverDTO } from '../dtos/CreateCoverDTO';
 import fs from 'fs';
@@ -96,6 +96,17 @@ const chunkUpload = multer({
 
 const coverUpload = multer({
   storage: coverStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB for cover images
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_IMAGE_MIMES.includes(file.mimetype)) {
+      return cb(new Error('Invalid file type. Allowed image formats: JPG, PNG'));
+    }
+    cb(null, true);
+  },
+});
+// Replacement cover: kept in memory because CoverArtService reads file.buffer.
+const coverReplaceUpload = multer({
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB for cover images
   fileFilter: (req, file, cb) => {
     if (!ALLOWED_IMAGE_MIMES.includes(file.mimetype)) {

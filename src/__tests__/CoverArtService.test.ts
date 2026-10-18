@@ -9,6 +9,17 @@ jest.mock('../services/PinataService', () => ({
   PinataService: { uploadFile: jest.fn() },
 }));
 
+jest.mock('../services/CacheService', () => ({
+  CacheService: { clearSong: jest.fn().mockResolvedValue(undefined) },
+}));
+
+jest.mock('../utils/s3Cleanup', () => ({
+  s3KeyFromUrl: jest.fn((url?: string) =>
+    url?.startsWith('https://b.s3') ? 'covers/old.png' : null,
+  ),
+  deleteS3Objects: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock('fluent-ffmpeg', () => {
   const handlers: Record<string, (...args: any[]) => void> = {};
   const instance: any = {
@@ -30,6 +41,8 @@ import AppDataSource from '../config/db';
 import { CoverArtService } from '../services/CoverArtService';
 import { PinataService } from '../services/PinataService';
 import { Song } from '../entities/Song';
+import { CacheService } from '../services/CacheService';
+import { deleteS3Objects } from '../utils/s3Cleanup';
 
 const mockSongRepo = {
   findOneBy: jest.fn(),
@@ -110,6 +123,28 @@ describe('CoverArtService.uploadCoverArt', () => {
     expect(song.coverArtPath).toContain('/ipfs/');
     expect(mockSongRepo.save).toHaveBeenCalledWith(song);
     expect(result.coverArtIpfsHash).toBe(song.coverArtIpfsHash);
+  });
+
+  it('clears the cache and deletes the previous S3 cover when replacing', async () => {
+    const song: any = {
+      id: 's1',
+      artistId: 'user-1',
+      coverArtPath: 'https://b.s3.amazonaws.com/covers/old.png',
+    };
+    mockSongRepo.findOneBy.mockResolvedValue(song);
+    mockSongRepo.save.mockImplementation(async (s: Song) => s);
+
+    await makeSvc().uploadCoverArt(
+      's1',
+      'user-1',
+      mockFile({
+        mimetype: 'image/png',
+        buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]),
+      }),
+    );
+
+    expect(CacheService.clearSong).toHaveBeenCalledWith('s1');
+    expect(deleteS3Objects).toHaveBeenCalledWith(['covers/old.png']);
   });
 
   it('accepts png and webp uploads', async () => {

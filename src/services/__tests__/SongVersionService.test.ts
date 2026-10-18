@@ -16,6 +16,7 @@ import AppDataSource from '../../config/db';
 import { SongVersionService } from '../Song/SongVersionService';
 import { Song } from '../../entities/Song';
 import { SongVersion } from '../../entities/SongVersion';
+import { UserRole } from '../../entities/User';
 import { AppError } from '../../errors/AppError';
 
 const mockSongRepo = {
@@ -29,6 +30,7 @@ const mockVersionRepo = {
   create: jest.fn((v: Partial<SongVersion>) => v as SongVersion),
   save: jest.fn(async (v: SongVersion) => v),
   find: jest.fn(),
+  findAndCount: jest.fn(),
   findOne: jest.fn(),
   update: jest.fn(),
 };
@@ -151,14 +153,33 @@ describe('SongVersionService.createVersionFromReupload', () => {
 describe('SongVersionService reads', () => {
   it('lists versions newest first', async () => {
     mockSongRepo.findOneBy.mockResolvedValue(makeSong());
-    mockVersionRepo.find.mockResolvedValue([{ versionNumber: 2 }, { versionNumber: 1 }]);
+    mockVersionRepo.findAndCount.mockResolvedValue([
+      [{ versionNumber: 2 }, { versionNumber: 1 }],
+      2,
+    ]);
 
-    const versions = await new SongVersionService().listVersions('song-1');
+    const result = await new SongVersionService().listVersions('song-1');
 
-    expect(versions).toHaveLength(2);
-    expect(mockVersionRepo.find).toHaveBeenCalledWith({
+    expect(result.versions).toHaveLength(2);
+    expect(result.pagination).toEqual({ page: 1, limit: 20, total: 2, totalPages: 1 });
+    expect(mockVersionRepo.findAndCount).toHaveBeenCalledWith({
       where: { songId: 'song-1' },
       order: { versionNumber: 'DESC' },
+      skip: 0,
+      take: 20,
+    });
+  });
+
+  it('lets only the owner or an admin view version history', async () => {
+    mockSongRepo.findOneBy.mockResolvedValue(makeSong());
+    const svc = new SongVersionService();
+
+    await expect(svc.assertCanViewHistory('song-1', { id: 'artist-1' })).resolves.toBeUndefined();
+    await expect(
+      svc.assertCanViewHistory('song-1', { id: 'admin-1', role: UserRole.ADMIN }),
+    ).resolves.toBeUndefined();
+    await expect(svc.assertCanViewHistory('song-1', { id: 'intruder' })).rejects.toMatchObject({
+      statusCode: 403,
     });
   });
 

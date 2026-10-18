@@ -147,6 +147,17 @@ export const commentRateLimiter = createSlidingWindowLimiter(
   },
 );
 
+// Song reports: at most 10 per user per hour to prevent report flooding.
+export const reportRateLimiter = createSlidingWindowLimiter(
+  60 * 60 * 1000,
+  10,
+  'report:rl',
+  (req) => {
+    const userId = (req as any).user?.id;
+    return userId ? `report:rl:${userId}` : `report:rl:${req.ip}`;
+  },
+);
+
 // AI Playlist Curation (Issue #275): Rate limit per user for AI prompt curation
 const AI_CURATION_WINDOW = parseInt(
   process.env.AI_CURATION_RATE_LIMIT_WINDOW_MS || String(60 * 1000),
