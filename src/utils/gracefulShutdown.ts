@@ -1,4 +1,5 @@
 import type { Server } from 'http';
+import type { Channel, ConsumeMessage } from 'amqplib';
 import AppDataSource from '../config/db';
 import logger from '../config/logger';
 import redis from '../config/redis';
@@ -51,6 +52,8 @@ async function performShutdown(signal: string): Promise<void> {
   }, SHUTDOWN_TIMEOUT_MS);
   forceTimer.unref();
 
+  const draining = drainWorkerQueues();
+
   try {
     if (state.server) {
       logger.info('Stopping HTTP server — no longer accepting new requests');
@@ -62,6 +65,8 @@ async function performShutdown(signal: string): Promise<void> {
   } catch (err) {
     logger.error({ err }, 'Error closing HTTP server');
   }
+
+  await draining;
 
   for (const hook of state.hooks) {
     try {
@@ -131,6 +136,123 @@ export async function closeRedis(): Promise<void> {
   }
 }
 
-export async function drainWorkerQueues(): Promise<void> {
-  logger.info('Worker queue drain hook — stub (RabbitMQ channel auto-closes on disconnect)');
+interface WorkerRegistration {
+  channel: Pick<Channel, 'cancel' | 'nack' | 'close'>;
+  consumerTag?: string;
+  closeConnection: () => Promise<void>;
+  pending: Map<ConsumeMessage, { promise: Promise<void>; active: boolean }>;
+  stopping: boolean;
+}
+
+const workers = new Set<WorkerRegistration>();
+let drainPromise: Promise<void> | undefined;
+
+export function registerWorkerQueue(
+  channel: WorkerRegistration['channel'],
+  closeConnection: () => Promise<void>,
+) {
+  if (state.shuttingDown || drainPromise) throw new Error('Cannot start worker during shutdown');
+  const worker: WorkerRegistration = {
+    channel,
+    closeConnection,
+    pending: new Map(),
+    stopping: false,
+  };
+  workers.add(worker);
+  return {
+    async setConsumerTag(tag: string): Promise<void> {
+      worker.consumerTag = tag;
+      if (worker.stopping) {
+        try {
+          await channel.cancel(tag);
+        } catch (err) {
+          logger.error({ err }, 'Failed to cancel late queue consumer');
+        }
+      }
+    },
+    async handle(
+      msg: ConsumeMessage,
+      handler: (isActive: () => boolean) => Promise<void>,
+    ): Promise<void> {
+      if (worker.stopping || state.shuttingDown) {
+        channel.nack(msg, false, true);
+        return;
+      }
+      const entry = { promise: Promise.resolve(), active: true };
+      worker.pending.set(msg, entry);
+      // Defer invocation so the promise is registered before the handler runs.
+      entry.promise = Promise.resolve()
+        .then(() => handler(() => entry.active))
+        .finally(() => {
+          entry.active = false;
+          worker.pending.delete(msg);
+        });
+      await entry.promise;
+    },
+  };
+}
+
+export function drainWorkerQueues(): Promise<void> {
+  if (drainPromise) return drainPromise;
+  drainPromise = (async () => {
+    const configured = Number(process.env.SHUTDOWN_DRAIN_TIMEOUT_MS ?? 25000);
+    const timeoutMs = Number.isFinite(configured) && configured >= 0 ? configured : 25000;
+    const registrations = [...workers];
+    registrations.forEach((worker) => {
+      worker.stopping = true;
+    });
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        (async () => {
+          await Promise.all(
+            registrations.map(async (worker) => {
+              if (worker.consumerTag) {
+                try {
+                  await worker.channel.cancel(worker.consumerTag);
+                } catch (err) {
+                  logger.error({ err }, 'Failed to cancel queue consumer');
+                }
+              }
+            }),
+          );
+          await Promise.allSettled(
+            registrations.flatMap((worker) =>
+              [...worker.pending.values()].map((entry) => entry.promise),
+            ),
+          );
+        })(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      for (const worker of registrations) {
+        for (const [msg, entry] of worker.pending) {
+          entry.active = false;
+          try {
+            worker.channel.nack(msg, false, true);
+          } catch (err) {
+            logger.error(
+              { err },
+              'Failed to requeue unfinished message; connection close will requeue',
+            );
+          }
+        }
+      }
+      await Promise.allSettled(
+        [...new Set(registrations.map((worker) => worker.channel))].map(async (channel) =>
+          channel.close(),
+        ),
+      );
+      await Promise.allSettled(
+        [...new Set(registrations.map((worker) => worker.closeConnection))].map(async (close) =>
+          close(),
+        ),
+      );
+      registrations.forEach((worker) => workers.delete(worker));
+    }
+  })();
+  return drainPromise;
 }

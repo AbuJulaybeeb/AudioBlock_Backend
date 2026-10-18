@@ -1,4 +1,9 @@
+jest.mock('../../../config/redis', () => ({
+  __esModule: true,
+  default: { status: 'ready', get: jest.fn().mockResolvedValue(null) },
+}));
 import { generateKeyPairSync } from 'crypto';
+import redis from '../../../config/redis';
 import jwt from 'jsonwebtoken';
 import { looksLikePrivyToken, readJwtHeader, verifyPrivyAccessToken } from '../PrivyTokenVerifier';
 import { PrivyJwksCache } from '../PrivyJwksCache';
@@ -17,7 +22,7 @@ function makeKeypair() {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   return {
     jwk: { ...publicKey.export({ format: 'jwk' }), kid: 'kid-1', alg: 'ES256', use: 'sig' },
-    pem: privateKey.export({ format: 'pem', type: 'pkcs8' }),
+    pem: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
     privateKey,
   };
 }
@@ -85,6 +90,20 @@ describe('PrivyTokenVerifier', () => {
         expiresAt: expect.any(Number),
       });
     });
+  });
+
+  it('awaits Redis session and user revocation checks for verified claims', async () => {
+    const { jwk, pem } = makeKeypair();
+    buildCache([jwk]);
+    jest
+      .mocked(redis.get)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(String(Date.now() / 1000 + 1));
+    await expect(verifyPrivyAccessToken(mint(pem), cache)).rejects.toMatchObject({
+      name: 'PrivySessionRevokedError',
+    });
+    expect(redis.get).toHaveBeenCalledWith('privy:revoked:sess_1');
+    expect(redis.get).toHaveBeenCalledWith('privy:revoked-user:' + DID);
   });
 
   describe('cryptographic and claim enforcement', () => {

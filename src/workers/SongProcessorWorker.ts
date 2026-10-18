@@ -1,4 +1,4 @@
-import { getChannel, MAIN_QUEUE, DLQ } from '../config/rabbitmq';
+import { getChannel, MAIN_QUEUE, DLQ, closeRabbitMQConnection } from '../config/rabbitmq';
 import AppDataSource from '../config/db';
 import { Song } from '../entities/Song';
 import { TransactionLogService } from '../services/TransactionLogService';
@@ -6,11 +6,12 @@ import { SongVersionService } from '../services/Song/SongVersionService';
 import { PinataService } from '../services/PinataService';
 import { SorobanService } from '../services/Soroban/SorobanService';
 import logger from '../config/logger';
+import { registerWorkerQueue } from '../utils/gracefulShutdown';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import axios from 'axios';
-import ffmpeg from 'fluent-ffmpeg';
+import { transcodeToHLS } from '../utils/ffmpeg';
 import { S3 } from 'aws-sdk';
 
 function getSongRepo() {
@@ -23,28 +24,6 @@ interface SongPayload {
   songId: string;
   fileId: string;
   attempt?: number;
-}
-
-/**
- * Transcode an MP3 file to HLS format.
- */
-async function transcodeToHLS(localFile: string, hlsDir: string): Promise<void> {
-  if (!fs.existsSync(hlsDir)) fs.mkdirSync(hlsDir, { recursive: true });
-
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg(localFile)
-      .outputOptions([
-        '-codec: copy',
-        '-start_number 0',
-        '-hls_time 10',
-        '-hls_list_size 0',
-        '-f hls',
-      ])
-      .output(path.join(hlsDir, 'master.m3u8'))
-      .on('end', () => resolve())
-      .on('error', reject)
-      .run();
-  });
 }
 
 /**
@@ -124,7 +103,7 @@ async function processSongMessage(
   const hlsDir = `uploads/hls/${fileId}`;
 
   // 1. Transcode to HLS
-  await transcodeToHLS(localFile, hlsDir);
+  await transcodeToHLS(localFile, hlsDir, songId);
 
   // 2. Upload to S3
   const masterUrl = await uploadHLSToS3(songId, fileId);
@@ -377,36 +356,40 @@ export async function startSongWorker() {
     workerStartedAt = new Date();
     logger.info(`🎵 Waiting for messages in queue: ${MAIN_QUEUE} (max attempts: ${MAX_ATTEMPTS})`);
 
+    const registration = registerWorkerQueue(channel, closeRabbitMQConnection);
     const consumeResult = await channel.consume(MAIN_QUEUE, async (msg) => {
       if (!msg) return;
 
-      const payload = parsePayload(msg.content.toString());
-      if (!payload) {
-        logger.error({ raw: msg.content.toString() }, 'Malformed queue message, discarding');
-        channel.nack(msg, false, false);
-        return;
-      }
+      await registration.handle(msg, async (isActive) => {
+        const payload = parsePayload(msg.content.toString());
+        if (!payload) {
+          logger.error({ raw: msg.content.toString() }, 'Malformed queue message, discarding');
+          channel.nack(msg, false, false);
+          return;
+        }
 
-      const attempt = payload.attempt ?? 1;
-      logger.info(
-        { songId: payload.songId, attempt },
-        `Processing song (attempt ${attempt}/${MAX_ATTEMPTS})`,
-      );
+        const attempt = payload.attempt ?? 1;
+        logger.info(
+          { songId: payload.songId, attempt },
+          `Processing song (attempt ${attempt}/${MAX_ATTEMPTS})`,
+        );
 
-      lastJobStartedAt = new Date();
+        lastJobStartedAt = new Date();
 
-      try {
-        await processSongMessage(payload, logService, versionService);
-        lastJobProcessedAt = new Date();
-        jobsProcessedCount++;
-        channel.ack(msg);
-      } catch (error) {
-        jobsFailedCount++;
-        handleFailure(channel, msg, payload, error);
-      }
+        try {
+          await processSongMessage(payload, logService, versionService);
+          lastJobProcessedAt = new Date();
+          jobsProcessedCount++;
+          if (isActive()) channel.ack(msg);
+        } catch (error) {
+          jobsFailedCount++;
+          if (isActive()) handleFailure(channel, msg, payload, error);
+        }
+      });
     });
 
     if (consumeResult && consumeResult.consumerTag) {
+      await registration.setConsumerTag(consumeResult.consumerTag);
       consumerTag = consumeResult.consumerTag;
       isConsuming = true;
     }
