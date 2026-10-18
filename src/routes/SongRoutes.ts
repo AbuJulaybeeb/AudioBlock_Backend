@@ -3,7 +3,7 @@ import { UploadController } from '../controllers/UploadController';
 import { validateDTO } from '../middlewares/validate';
 import { FinalizeUploadDTO } from '../dtos/FinalizeUploadDTO';
 import { UploadChunkDTO } from '../dtos/UploadChunkDTO';
-import { authArtistMiddleware } from '../middlewares/authMiddleware';
+import { authArtistMiddleware, requireAuth } from '../middlewares/authMiddleware';
 import multer from 'multer';
 import { CreateCoverDTO } from '../dtos/CreateCoverDTO';
 import fs from 'fs';
@@ -11,6 +11,9 @@ import { SongController } from '../controllers/SongController';
 import { EmbedController } from '../controllers/EmbedController';
 import { SubmitSignedXdrDTO } from '../dtos/SubmitSignedXdrDTO';
 import { idempotency } from '../middlewares/idempotency';
+import { reportRateLimiter } from '../middlewares/rateLimiter';
+import { ReportSongDTO } from '../dtos/ReportSongDTO';
+import { UpdateSongDTO } from '../dtos/UpdateSongDTO';
 
 const uploadController = new UploadController();
 const router = Router();
@@ -102,6 +105,17 @@ const coverUpload = multer({
     cb(null, true);
   },
 });
+// Replacement cover: kept in memory because CoverArtService reads file.buffer.
+const coverReplaceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB for cover images
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_IMAGE_MIMES.includes(file.mimetype)) {
+      return cb(new Error('Invalid file type. Allowed image formats: JPG, PNG'));
+    }
+    cb(null, true);
+  },
+});
 // const upload = multer({ dest: "uploads/temp/" });
 router.post(
   '/upload/chunk',
@@ -142,6 +156,35 @@ router.post(
   idempotency(),
   validateDTO(SubmitSignedXdrDTO),
   SongController.submitMint,
+);
+
+// Edit or remove a song (owner or admin; enforced in SongService)
+router.patch('/:id', authArtistMiddleware, validateDTO(UpdateSongDTO), SongController.updateSong);
+router.delete('/:id', authArtistMiddleware, SongController.deleteSong);
+
+// Lyrics are public, but only served once the lyrics rights are confirmed
+router.get('/:id/lyrics', SongController.getLyrics);
+
+// Cover art: public read, owner-only replacement
+router.get('/:id/cover', SongController.getCoverArt);
+router.put(
+  '/:id/cover',
+  authArtistMiddleware,
+  coverReplaceUpload.single('cover'),
+  SongController.uploadCoverArt,
+);
+
+// Version history (owner or admin; enforced in SongController)
+router.get('/:id/versions', requireAuth, SongController.listVersions);
+router.get('/:id/versions/:version', requireAuth, SongController.getVersion);
+
+// Content reports: one per user per song (a repeat returns 409), 10 per hour per user
+router.post(
+  '/:id/report',
+  requireAuth,
+  reportRateLimiter,
+  validateDTO(ReportSongDTO),
+  SongController.reportSong,
 );
 
 // Collaborator dispute endpoints

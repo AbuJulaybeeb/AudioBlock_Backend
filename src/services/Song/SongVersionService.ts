@@ -2,6 +2,7 @@ import { Repository } from 'typeorm';
 import AppDataSource from '../../config/db';
 import { Song } from '../../entities/Song';
 import { SongVersion } from '../../entities/SongVersion';
+import { UserRole } from '../../entities/User';
 import { AppError } from '../../errors/AppError';
 import { CacheService } from '../CacheService';
 import logger from '../../config/logger';
@@ -159,18 +160,53 @@ export class SongVersionService {
   }
 
   /**
-   * List every revision of a song, newest first.
+   * Version history can include unreleased audio, so only the owning artist
+   * and admins may read it.
+   *
+   * @throws {AppError} 404 when the song does not exist, 403 for anyone else.
+   */
+  async assertCanViewHistory(songId: string, requester: { id: string; role?: UserRole }) {
+    const song = await this.songRepo.findOneBy({ id: songId });
+    if (!song) {
+      throw AppError.notFound('Song not found', undefined, 'SONG_NOT_FOUND');
+    }
+    if (song.artistId !== requester.id && requester.role !== UserRole.ADMIN) {
+      throw AppError.authorization(
+        'Not authorized to view versions of this song',
+        undefined,
+        'NOT_SONG_OWNER',
+      );
+    }
+  }
+
+  /**
+   * List the revisions of a song, newest first.
    *
    * @param songId - ID of the song.
-   * @returns All version records ordered by descending version number.
+   * @param page - 1-based page number.
+   * @param limit - Page size, capped at 100.
    * @throws {AppError} 404 when the song does not exist.
    */
-  async listVersions(songId: string): Promise<SongVersion[]> {
+  async listVersions(songId: string, page = 1, limit = 20) {
     await this.assertSongExists(songId);
-    return this.versionRepo.find({
+    const safePage = Math.max(1, Math.floor(page) || 1);
+    const safeLimit = Math.min(Math.max(1, Math.floor(limit) || 20), 100);
+
+    const [versions, total] = await this.versionRepo.findAndCount({
       where: { songId },
       order: { versionNumber: 'DESC' },
+      skip: (safePage - 1) * safeLimit,
+      take: safeLimit,
     });
+    return {
+      versions,
+      pagination: {
+        page: safePage,
+        limit: safeLimit,
+        total,
+        totalPages: Math.ceil(total / safeLimit) || 0,
+      },
+    };
   }
 
   /**

@@ -1,7 +1,7 @@
 import { FindOptionsOrder, Repository } from 'typeorm';
 import { Song } from '../entities/Song';
 import { SongVersion } from '../entities/SongVersion';
-import { User } from '../entities/User';
+import { User, UserRole } from '../entities/User';
 import { TransactionLog } from '../entities/TransactionLog';
 import { RoyaltyTemplate } from '../entities/RoyaltyTemplate';
 import AppDataSource from '../config/db';
@@ -21,8 +21,30 @@ import { AppError } from '../errors/AppError';
 import { ActivityService } from './ActivityService';
 import logger from '../config/logger';
 import { songsUploadedTotal } from './MetricsService';
+import { deleteS3Objects, deleteS3Prefix, s3KeyFromUrl } from '../utils/s3Cleanup';
 
 const activityService = new ActivityService();
+
+/** Song fields an owner may edit via `PATCH /api/song/:id`. */
+const EDITABLE_SONG_FIELDS = [
+  'title',
+  'description',
+  'genreId',
+  'composers',
+  'lyrics',
+  'language',
+] as const;
+
+/** Editable fields that are part of the on-chain metadata once a song is minted. */
+const MINTED_IMMUTABLE_FIELDS = ['title', 'description', 'genreId'] as const;
+
+export type UpdateSongInput = Partial<Pick<Song, (typeof EDITABLE_SONG_FIELDS)[number]>>;
+
+/** The authenticated caller of an owner-restricted song operation. */
+export interface SongRequester {
+  id: string;
+  role?: UserRole;
+}
 
 /**
  * Parameters for {@link SongService.finalizeUpload}.
@@ -60,23 +82,104 @@ export class SongService {
     return await this.songRepo.save(song);
   }
 
-  async updateSong(id: string, data: any) {
+  /**
+   * Update the editable metadata of a song.
+   *
+   * Only the fields in {@link EDITABLE_SONG_FIELDS} are written. Once a song is
+   * minted, the fields embedded in its on-chain metadata cannot change.
+   *
+   * @throws {AppError} 403 when the caller is not the owner (or an admin), 409
+   *   when a minted song's on-chain field is changed.
+   */
+  async updateSong(id: string, data: UpdateSongInput, requester: SongRequester) {
     const song = await this.getSong(id);
-    Object.assign(song, data);
+    this.assertCanModify(song, requester);
+
+    if (song.mintStatus === 'minted') {
+      const locked = MINTED_IMMUTABLE_FIELDS.filter(
+        (field) => data[field] !== undefined && data[field] !== song[field],
+      );
+      if (locked.length > 0) {
+        throw AppError.conflict(
+          `Cannot change ${locked.join(', ')} after the song is minted on-chain`,
+          { fields: locked },
+          'SONG_FIELD_IMMUTABLE',
+        );
+      }
+    }
+
+    for (const field of EDITABLE_SONG_FIELDS) {
+      if (data[field] !== undefined) song[field] = data[field] as never;
+    }
     const result = await this.songRepo.save(song);
     // Invalidate the cached streaming manifest so updated metadata is
     // reflected immediately, not only after TTL expiry (#335).
     await CacheService.clearSong(id);
+    if (result.status === 'ready' && !result.flagged) {
+      const indexable = await this.songRepo.findOne({ where: { id }, relations: ['user'] });
+      if (indexable) SearchIndexService.scheduleIndexUpdate(indexable);
+    }
     return result;
   }
 
-  async deleteSong(id: string) {
+  /**
+   * Delete a song.
+   *
+   * An unminted song is removed along with its stored files. A minted song's
+   * on-chain token still exists, so it is hidden (flagged) instead and its
+   * files are kept.
+   *
+   * @throws {AppError} 403 when the caller is not the owner (or an admin).
+   */
+  async deleteSong(id: string, requester: SongRequester) {
     const song = await this.getSong(id);
+    this.assertCanModify(song, requester);
+
+    if (song.mintStatus === 'minted' || song.mintStatus === 'pending') {
+      song.flagged = true;
+      song.flaggedAt = new Date();
+      song.flaggedBy = requester.id;
+      song.flagReason = 'Hidden by owner (song is minted on-chain)';
+      await this.songRepo.save(song);
+      SearchIndexService.scheduleRemoval(id);
+      await CacheService.clearSong(id);
+      return { success: true, hidden: true };
+    }
+
     await this.songRepo.remove(song);
+    SearchIndexService.scheduleRemoval(id);
     // Invalidate cache on delete so a re-created song with the same ID
     // doesn't serve stale data (#335).
     await CacheService.clearSong(id);
-    return { success: true };
+    await this.deleteSongFiles(id, song);
+    return { success: true, hidden: false };
+  }
+
+  /** Best-effort removal of a deleted song's original upload, HLS segments and cover art. */
+  private async deleteSongFiles(id: string, song: Song) {
+    try {
+      const keys = [
+        song.s3OriginalUrl,
+        song.coverArtPath,
+        ...Object.values(song.coverArtThumbnails ?? {}),
+      ]
+        .map((url) => s3KeyFromUrl(url))
+        .filter((key): key is string => key !== null);
+      await deleteS3Objects(keys);
+      await deleteS3Prefix(`songs/${id}/hls/`);
+    } catch (err) {
+      logger.error({ err, songId: id }, 'Failed to clean up S3 objects for deleted song');
+    }
+  }
+
+  private assertCanModify(song: Song, requester: SongRequester) {
+    if (song.artistId !== requester.id && requester.role !== UserRole.ADMIN) {
+      throw AppError.authorization(
+        'You can only modify your own songs',
+        undefined,
+        'NOT_SONG_OWNER',
+      );
+    }
   }
 
   async listSongs(query: any) {
@@ -823,7 +926,8 @@ export class SongService {
     if (!song) {
       throw AppError.notFound('Song not found', undefined, 'SONG_NOT_FOUND');
     }
-    if (!song.lyrics) {
+    // Lyrics are only served once the artist has confirmed they hold the rights.
+    if (!song.lyrics || !song.lyricsRightsConfirmedAt) {
       throw AppError.notFound('Lyrics not found for this song', undefined, 'LYRICS_NOT_FOUND');
     }
 
