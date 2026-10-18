@@ -1,21 +1,53 @@
 import { Request, Response, NextFunction } from 'express';
 import redis from '../config/redis';
-import { AppError } from '../errors/AppError';
+import { AppError, ErrorType } from '../errors/AppError';
 import { handleError } from '../utils/helpers';
 import logger from '../config/logger';
+import { rateLimitFallbacksTotal } from '../services/MetricsService';
+
+export interface SlidingWindowLimiterOptions {
+  /**
+   * Behavior when Redis is unavailable. `open` lets the request through;
+   * `closed` rejects with 503 (or uses the in-memory fallback if enabled).
+   */
+  failureMode?: 'open' | 'closed';
+  /** In `closed` mode, enforce per-instance limits in memory instead of returning 503. */
+  memoryFallback?: boolean;
+}
+
+const MEMORY_SWEEP_THRESHOLD = 10_000;
+const MAX_UNAVAILABLE_RETRY_AFTER_SEC = 30;
 
 export const createSlidingWindowLimiter = (
   windowMs: number,
   max: number,
   prefix: string,
   keyGenerator?: (req: Request) => string,
+  options: SlidingWindowLimiterOptions = {},
 ) => {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const key = keyGenerator ? keyGenerator(req) : `${prefix}:${req.ip}`;
-      const now = Date.now();
-      const windowStart = now - windowMs;
+  const { failureMode = 'open', memoryFallback = false } = options;
+  // Per-instance sliding window used only when Redis is down in `closed` mode.
+  const memoryStore = new Map<string, number[]>();
 
+  const memoryCount = (key: string, now: number): number => {
+    if (memoryStore.size > MEMORY_SWEEP_THRESHOLD) {
+      for (const [k, hits] of memoryStore) {
+        if (hits[hits.length - 1] <= now - windowMs) memoryStore.delete(k);
+      }
+    }
+    const hits = (memoryStore.get(key) ?? []).filter((t) => t > now - windowMs);
+    hits.push(now);
+    memoryStore.set(key, hits);
+    return hits.length;
+  };
+
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const key = keyGenerator ? keyGenerator(req) : `${prefix}:${req.ip}`;
+    const now = Date.now();
+    const windowStart = now - windowMs;
+    let count: number;
+
+    try {
       const pipeline = redis.pipeline();
       // Remove requests outside the current window
       pipeline.zremrangebyscore(key, 0, windowStart);
@@ -27,31 +59,57 @@ export const createSlidingWindowLimiter = (
       pipeline.expire(key, Math.ceil(windowMs / 1000));
 
       const results = await pipeline.exec();
-      const count = results?.[2]?.[1] as number;
-
-      res.setHeader('X-RateLimit-Limit', max);
-      res.setHeader('X-RateLimit-Remaining', Math.max(0, max - count));
-      res.setHeader('X-RateLimit-Reset', Math.ceil((now + windowMs) / 1000));
-
-      if (count > max) {
-        logger.warn({ ip: req.ip, path: req.originalUrl, prefix }, 'Rate limit exceeded');
-        const retryAfterSec = Math.ceil(windowMs / 1000);
+      count = results?.[2]?.[1] as number;
+      if (typeof count !== 'number') throw new Error('Invalid rate limiter response from Redis');
+    } catch (error) {
+      logger.warn(
+        { err: error, prefix, failureMode, memoryFallback },
+        'Rate limiter Redis unavailable, using fallback',
+      );
+      if (failureMode === 'open') {
+        rateLimitFallbacksTotal.inc({ limiter: prefix, mode: 'open' });
+        next();
+        return;
+      }
+      if (!memoryFallback) {
+        rateLimitFallbacksTotal.inc({ limiter: prefix, mode: 'closed' });
+        const retryAfterSec = Math.min(Math.ceil(windowMs / 1000), MAX_UNAVAILABLE_RETRY_AFTER_SEC);
         res.setHeader('Retry-After', String(retryAfterSec));
         handleError(
           req,
           res as any,
-          AppError.rateLimited('Too many requests. Please try again later.', {
-            retryAfter: retryAfterSec,
-          }),
+          new AppError(
+            'Service temporarily unavailable. Please try again later.',
+            ErrorType.EXTERNAL_SERVICE_ERROR,
+            503,
+            true,
+            { retryAfter: retryAfterSec },
+          ),
         );
         return;
       }
-      next();
-    } catch (error) {
-      // Fail open if Redis is down
-      logger.error({ err: error }, 'Rate limiter error');
-      next();
+      rateLimitFallbacksTotal.inc({ limiter: prefix, mode: 'memory' });
+      count = memoryCount(key, now);
     }
+
+    res.setHeader('X-RateLimit-Limit', max);
+    res.setHeader('X-RateLimit-Remaining', Math.max(0, max - count));
+    res.setHeader('X-RateLimit-Reset', Math.ceil((now + windowMs) / 1000));
+
+    if (count > max) {
+      logger.warn({ ip: req.ip, path: req.originalUrl, prefix }, 'Rate limit exceeded');
+      const retryAfterSec = Math.ceil(windowMs / 1000);
+      res.setHeader('Retry-After', String(retryAfterSec));
+      handleError(
+        req,
+        res as any,
+        AppError.rateLimited('Too many requests. Please try again later.', {
+          retryAfter: retryAfterSec,
+        }),
+      );
+      return;
+    }
+    next();
   };
 };
 
@@ -86,6 +144,17 @@ export const commentRateLimiter = createSlidingWindowLimiter(
   (req) => {
     const userId = (req as any).user?.id;
     return userId ? `comment:rl:${userId}` : `comment:rl:${req.ip}`;
+  },
+);
+
+// Song reports: at most 10 per user per hour to prevent report flooding.
+export const reportRateLimiter = createSlidingWindowLimiter(
+  60 * 60 * 1000,
+  10,
+  'report:rl',
+  (req) => {
+    const userId = (req as any).user?.id;
+    return userId ? `report:rl:${userId}` : `report:rl:${req.ip}`;
   },
 );
 

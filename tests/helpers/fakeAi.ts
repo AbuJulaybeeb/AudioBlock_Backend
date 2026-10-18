@@ -9,7 +9,7 @@
  *   (TagSuggestionService, PlaylistService curation, ...).
  * - `FakeAiProvider` implements `AiProvider` — install it with
  *   `setAiProviderForTests` (AiGenerationService, TweetDraftService,
- *   ReportService triage, SearchIndexService, ...).
+ *   ReportService triage, ...).
  *
  * Both record every call, return deterministic output, and can be told to
  * fail or to add latency (the latter is used by the concurrency benchmark in

@@ -17,7 +17,7 @@ The codebase has two AI entry points, and there is one fake for each:
 | Layer | Used by | Fake | How to install |
 | --- | --- | --- | --- |
 | `AIProviderService` + `IAIAdapter` (`src/services/AI`) | `TagSuggestionService`, `PlaylistService` curation | `FakeAIAdapter` | `createFakeAIProviderService()` for constructor injection, or `installFakeAi()` for code that uses the `getAIProviderService()` singleton |
-| `AiProvider` (`src/services/ai`) | `AiGenerationService` (cover art, descriptions, lyric transcription), `TweetDraftService`, `ReportService` triage, `SearchIndexService` embeddings | `FakeAiProvider` | `installFakeAi()`, which calls `setAiProviderForTests()` |
+| `AiProvider` (`src/services/ai`) | `AiGenerationService` (cover art, descriptions, lyric transcription), `TweetDraftService`, `ReportService` triage | `FakeAiProvider` | `installFakeAi()`, which calls `setAiProviderForTests()` |
 
 Both fakes:
 

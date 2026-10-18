@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import axios from 'axios';
-import ffmpeg from 'fluent-ffmpeg';
+import { transcodeToHLS } from '../utils/ffmpeg';
 import { S3 } from 'aws-sdk';
 
 function getSongRepo() {
@@ -23,28 +23,6 @@ interface SongPayload {
   songId: string;
   fileId: string;
   attempt?: number;
-}
-
-/**
- * Transcode an MP3 file to HLS format.
- */
-async function transcodeToHLS(localFile: string, hlsDir: string): Promise<void> {
-  if (!fs.existsSync(hlsDir)) fs.mkdirSync(hlsDir, { recursive: true });
-
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg(localFile)
-      .outputOptions([
-        '-codec: copy',
-        '-start_number 0',
-        '-hls_time 10',
-        '-hls_list_size 0',
-        '-f hls',
-      ])
-      .output(path.join(hlsDir, 'master.m3u8'))
-      .on('end', () => resolve())
-      .on('error', reject)
-      .run();
-  });
 }
 
 /**

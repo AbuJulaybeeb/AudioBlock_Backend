@@ -7,12 +7,6 @@ jest.mock('../../config/db', () => ({
 jest.mock('../CacheService', () => ({
   CacheService: { clearSong: jest.fn().mockResolvedValue(undefined) },
 }));
-jest.mock('../SearchIndexService', () => ({
-  SearchIndexService: {
-    scheduleRemoval: jest.fn(),
-    scheduleIndexUpdate: jest.fn(),
-  },
-}));
 
 const createLogEntry = jest.fn().mockResolvedValue(undefined);
 jest.mock('../TransactionLogService', () => ({
@@ -24,7 +18,6 @@ jest.mock('../../config/logger', () => ({
 }));
 
 import AppDataSource from '../../config/db';
-import { SearchIndexService } from '../SearchIndexService';
 import { SongModerationService, BULK_MODERATION_MAX_BATCH } from '../Song/SongModerationService';
 import { Song } from '../../entities/Song';
 
@@ -111,7 +104,7 @@ describe('SongModerationService.bulkModerate validation', () => {
 });
 
 describe('SongModerationService.bulkModerate actions', () => {
-  it('approve clears flags and re-indexes ready songs', async () => {
+  it('approve clears flags', async () => {
     const song = makeSong('song-1', { flagged: true, flaggedBy: 'mod-1' });
     mockSongRepo.find.mockResolvedValue([song]);
     mockSongRepo.findOne.mockResolvedValue(song);
@@ -120,7 +113,6 @@ describe('SongModerationService.bulkModerate actions', () => {
 
     expect(result.results[0]).toMatchObject({ songId: 'song-1', success: true, flagged: false });
     expect(song.flagged).toBe(false);
-    expect(SearchIndexService.scheduleIndexUpdate).toHaveBeenCalled();
   });
 
   it('approve fails for a song still processing', async () => {
@@ -132,7 +124,7 @@ describe('SongModerationService.bulkModerate actions', () => {
     expect(result.results[0].reason).toMatch(/still processing/);
   });
 
-  it('reject flags the song, marks it failed, and pulls it from search', async () => {
+  it('reject flags the song and marks it failed', async () => {
     const song = makeSong('song-1');
     mockSongRepo.find.mockResolvedValue([song]);
 
@@ -142,7 +134,6 @@ describe('SongModerationService.bulkModerate actions', () => {
     expect(song.status).toBe('failed');
     expect(song.flagged).toBe(true);
     expect(song.flaggedBy).toBe('admin-1');
-    expect(SearchIndexService.scheduleRemoval).toHaveBeenCalledWith('song-1');
   });
 
   it('flag_for_review flags without changing processing status', async () => {

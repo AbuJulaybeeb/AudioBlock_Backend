@@ -44,7 +44,7 @@ export class SongController {
 
   static updateSong = async (req: Request, res: Response) => {
     try {
-      const song = await songService.updateSong(req.params.id as string, req.body);
+      const song = await songService.updateSong(req.params.id as string, req.body, req.user!);
       return res.status(200).json({ success: true, data: song });
     } catch (error) {
       handleError(req, res, error);
@@ -53,8 +53,8 @@ export class SongController {
 
   static deleteSong = async (req: Request, res: Response) => {
     try {
-      await songService.deleteSong(req.params.id as string);
-      return res.status(200).json({ success: true, data: null });
+      const result = await songService.deleteSong(req.params.id as string, req.user!);
+      return res.status(200).json({ success: true, data: { hidden: result.hidden } });
     } catch (error) {
       handleError(req, res, error);
     }
@@ -209,19 +209,6 @@ export class SongController {
       res.status(200).json({ success: true, data: song });
     } catch (error) {
       handleError(res, error);
-    }
-  };
-
-  static rebuildSearchIndex = async (req: Request, res: Response) => {
-    try {
-      const indexed = await songService.rebuildSearchIndex();
-      return res.status(200).json({
-        success: true,
-        message: 'Search index rebuilt',
-        indexed,
-      });
-    } catch (error) {
-      handleError(req, res, error);
     }
   };
 
@@ -434,8 +421,15 @@ export class SongController {
   static listVersions = async (req: Request, res: Response) => {
     try {
       const songId = req.params.id as string;
-      const versions = await songVersionService.listVersions(songId);
-      return res.status(200).json({ success: true, count: versions.length, data: versions });
+      await songVersionService.assertCanViewHistory(songId, req.user!);
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 20;
+      const result = await songVersionService.listVersions(songId, page, limit);
+      return res.status(200).json({
+        success: true,
+        data: result.versions,
+        pagination: result.pagination,
+      });
     } catch (error) {
       handleError(req, res, error);
     }
@@ -445,6 +439,7 @@ export class SongController {
   static getVersion = async (req: Request, res: Response) => {
     try {
       const songId = req.params.id as string;
+      await songVersionService.assertCanViewHistory(songId, req.user!);
       const versionNumber = Number(req.params.version);
       const version = await songVersionService.getVersion(songId, versionNumber);
       return res.status(200).json({ success: true, data: version });

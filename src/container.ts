@@ -157,7 +157,6 @@ export const SERVICE_NAMES = {
   PINATA_SERVICE: 'PinataService',
   JOB_QUEUE_SERVICE: 'JobQueueService',
   METRICS_SERVICE: 'MetricsService',
-  SEARCH_INDEX_SERVICE: 'SearchIndexService',
   BATCH_SERVICE: 'BatchService',
   AI_PROVIDER_SERVICE: 'AIProviderService',
 

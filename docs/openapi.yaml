@@ -33,6 +33,93 @@ paths:
       summary: Revoke an API key
       description: Revokes an active API key.
 
+  /api/song/{id}/collaborators:
+    get:
+      summary: List song collaborators
+      description: Public. Returns the active collaborators and their royalty shares for a song.
+      responses:
+        '200':
+          description: Active collaborators.
+    post:
+      summary: Add a song collaborator
+      description: Owner only. Total shares across collaborators cannot exceed 100. The added user is notified. Returns 409 once the song is minting or minted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, role, royaltyShare]
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                role:
+                  type: string
+                  enum: [primary, featured, producer, writer, mixer]
+                royaltyShare:
+                  type: number
+                  minimum: 0.01
+                  maximum: 100
+      responses:
+        '201':
+          description: Collaborator added.
+        '400':
+          description: Invalid role or share, or total shares would exceed 100.
+        '403':
+          description: Caller is not the song owner.
+        '409':
+          description: Already a collaborator, or the song is minting or minted.
+  /api/song/{id}/collaborators/{userId}:
+    patch:
+      summary: Update a song collaborator
+      description: Owner only. Returns 409 once the song is minting or minted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [primary, featured, producer, writer, mixer]
+                royaltyShare:
+                  type: number
+                  minimum: 0.01
+                  maximum: 100
+      responses:
+        '200':
+          description: Collaborator updated.
+        '400':
+          description: Invalid role or share, or total shares would exceed 100.
+        '403':
+          description: Caller is not the song owner.
+        '404':
+          description: Collaborator not found.
+        '409':
+          description: The song is minting or minted.
+  /api/song/{id}/royalty-template:
+    post:
+      summary: Apply a saved royalty template to a song
+      description: Owner only. Returns 409 once the song is minting or minted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [templateId]
+              properties:
+                templateId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Template applied.
+        '409':
+          description: The song is minting or minted.
+
   /api/activity/onchain:
     get:
       summary: List indexed on-chain activity
@@ -90,89 +177,55 @@ paths:
                       $ref: '#/components/schemas/IndexedEvent'
                   pagination:
                     $ref: '#/components/schemas/Pagination'
-  /api/song:
-    get:
-      summary: List songs
-      description: Filtered, paginated song listing. Public callers only receive ready, unflagged songs. An artist listing their own songs (artistId equal to the caller) receives every status and may filter by status.
-      parameters:
-        - name: artistId
-          in: query
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: genreId
-          in: query
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: tag
-          in: query
-          required: false
-          description: Tag slug.
-          schema:
-            type: string
-        - name: mintStatus
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [not_minted, pending, minted, failed]
-        - name: sort
-          in: query
-          required: false
-          schema:
-            type: string
-            enum: [newest, popular, title]
-            default: newest
-        - name: status
-          in: query
-          required: false
-          description: Owner only. Returns 403 when artistId is not the caller.
-          schema:
-            type: string
-            enum: [processing, ready, failed]
-        - name: page
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            default: 1
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
+  /api/song/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      summary: Edit a song
+      description: Owner or admin only. Only title, description, genreId, composers, lyrics and language are editable; other fields are ignored. Once a song is minted, changing title, description or genreId returns 409 because they are part of the on-chain metadata.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                genreId:
+                  type: string
+                composers:
+                  type: string
+                lyrics:
+                  type: string
+                language:
+                  type: string
       responses:
         '200':
-          description: A paginated list of songs.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Song'
-                  pagination:
-                    $ref: '#/components/schemas/Pagination'
-        '400':
-          description: Invalid query parameter.
+          description: The updated song.
         '403':
-          description: The status filter was used on songs the caller does not own.
-  /api/song/{id}:
+          description: The caller does not own the song.
+        '409':
+          description: The song is minted and the change touches on-chain metadata.
+    delete:
+      summary: Delete a song
+      description: Owner or admin only. An unminted song is deleted and its original upload, HLS segments and cover art are removed from S3. A minted song cannot be deleted because its on-chain token still exists, so it is hidden instead (flagged) and its files are kept; the response has data.hidden set to true.
+      responses:
+        '200':
+          description: The song was deleted or hidden.
+        '403':
+          description: The caller does not own the song.
+  /api/song/{id}/lyrics:
     get:
-      summary: Get a song
-      description: Returns one song. Flagged, taken-down and not-ready songs return 404 unless the caller is the owning artist, who also receives errorReason. Supports ETag and If-None-Match.
+      summary: Get song lyrics
+      description: Public. Returns 404 when the song has no lyrics or the lyrics rights have not been confirmed.
       parameters:
         - name: id
           in: path
@@ -182,23 +235,132 @@ paths:
             format: uuid
       responses:
         '200':
-          description: The song.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/Song'
-        '304':
-          description: Not modified.
-        '400':
-          description: The id is not a UUID.
+          description: The lyrics and their language.
         '404':
-          description: Song not found or not visible to the caller.
+          description: No servable lyrics for this song.
+  /api/song/{id}/cover:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get song cover art
+      description: Public. Returns the cover art URL, IPFS hash and thumbnail URLs for each size (150, 300, 600).
+      responses:
+        '200':
+          description: Cover art URLs.
+    put:
+      summary: Replace song cover art
+      description: Owner only. Multipart upload in the cover field (JPG or PNG, max 5 MB). Thumbnails are regenerated, the previous cover is deleted from S3 when stored there, and the song cache is cleared. For a minted song only the off-chain cover changes; the image referenced by the on-chain metadata is immutable.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                cover:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: The updated song.
+        '400':
+          description: Missing file or invalid image type.
+        '403':
+          description: The caller does not own the song.
+        '413':
+          description: The image exceeds the size limit.
+  /api/song/{id}/versions:
+    get:
+      summary: List song versions
+      description: Owner or admin only, since version history can include unreleased audio. Paginated, newest first.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: A page of versions with pagination metadata.
+        '403':
+          description: The caller does not own the song.
+  /api/song/{id}/versions/{version}:
+    get:
+      summary: Get one song version
+      description: Owner or admin only.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: version
+          in: path
+          required: true
+          description: 1-based version number.
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: The requested version.
+        '403':
+          description: The caller does not own the song.
+        '404':
+          description: Version not found.
+  /api/song/{id}/report:
+    post:
+      summary: Report a song
+      description: Authenticated users only. Each user can report a song once; a repeat report returns 409. Each user is limited to 10 reports per hour (429 beyond that). Reports appear in the admin moderation queue at GET /api/admin/reports.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                description:
+                  type: string
+                  maxLength: 1000
+      responses:
+        '201':
+          description: The report was submitted.
+        '404':
+          description: Song not found.
+        '409':
+          description: The caller already reported this song.
+        '429':
+          description: Too many reports in the last hour.
 components:
   schemas:
     Song:
