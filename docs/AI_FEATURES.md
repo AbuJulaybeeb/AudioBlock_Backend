@@ -39,9 +39,10 @@ and run on either the node process or the SQL database.
 
 ### 3. Search
 
-- **Where:** `src/services/SearchIndexService.ts`.
-- **What it does:** an inverted index (Redis) for song lookup. Deterministic
-  tokenization — **not** semantic/vector search, no embeddings.
+- **Where:** `SongService.searchSongs`.
+- **What it does:** Postgres `pg_trgm` substring matching and similarity
+  ranking for song lookup. Deterministic — **not** semantic/vector search, no
+  embeddings.
 
 ### 4. Recommendations / discovery
 

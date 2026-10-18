@@ -210,19 +210,6 @@ export class SongController {
     }
   };
 
-  static rebuildSearchIndex = async (req: Request, res: Response) => {
-    try {
-      const indexed = await songService.rebuildSearchIndex();
-      return res.status(200).json({
-        success: true,
-        message: 'Search index rebuilt',
-        indexed,
-      });
-    } catch (error) {
-      handleError(req, res, error);
-    }
-  };
-
   static getPopularSongs = async (req: Request, res: Response) => {
     try {
       const page = parseInt(req.query.page as string) || 1;

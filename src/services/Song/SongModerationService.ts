@@ -2,7 +2,6 @@ import { In, Repository } from 'typeorm';
 import AppDataSource from '../../config/db';
 import { Song } from '../../entities/Song';
 import { AppError } from '../../errors/AppError';
-import { SearchIndexService } from '../SearchIndexService';
 import { TransactionLogService } from '../TransactionLogService';
 import { CacheService } from '../CacheService';
 import logger from '../../config/logger';
@@ -131,14 +130,6 @@ export class SongModerationService {
         song.flaggedBy = null;
         song.flagReason = null;
         await this.songRepo.save(song);
-
-        if (song.status === 'ready') {
-          const full = await this.songRepo.findOne({
-            where: { id: song.id },
-            relations: ['user'],
-          });
-          if (full) SearchIndexService.scheduleIndexUpdate(full);
-        }
         break;
       }
 
@@ -150,7 +141,6 @@ export class SongModerationService {
         song.status = 'failed';
         song.errorReason = 'Rejected by admin moderation';
         await this.songRepo.save(song);
-        SearchIndexService.scheduleRemoval(song.id);
         break;
       }
 
@@ -160,7 +150,6 @@ export class SongModerationService {
         song.flaggedBy = adminId;
         song.flagReason = 'Flagged for review by admin moderation';
         await this.songRepo.save(song);
-        SearchIndexService.scheduleRemoval(song.id);
         break;
       }
     }

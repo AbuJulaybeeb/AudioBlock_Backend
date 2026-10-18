@@ -104,12 +104,18 @@ sequenceDiagram
         Controller->>Service: uploadSong(artistId, file, dto)
         Service->>S3: Upload original master audio (.wav/.mp3)
         Service->>Worker: Enqueue HLS Transcode Job
-        Worker->>Worker: Generate HLS .m3u8 playlist & .ts segments
+        Worker->>Worker: Re-encode to AAC-LC & generate HLS .m3u8 playlist & fMP4 segments
         Worker->>S3: Upload HLS playlist & segments
         Worker->>S3: Pin metadata & audio to IPFS
         Service->>DB: Set song status = 'ready'
     end
 ```
+
+The worker never copies the uploaded codec. `transcodeToHLS` (`src/utils/ffmpeg.ts`) re-encodes every upload (MP3, WAV, FLAC, AAC/M4A, OGG) so listeners always receive the same format:
+
+- **Codec:** AAC-LC, 44.1 kHz, at `HLS_AUDIO_BITRATE` (default `256k`). Embedded cover art and video streams are dropped (`-vn`).
+- **Segments:** 10 second fMP4 segments (`init.mp4` + `.m4s`) rather than MPEG-TS. fMP4 plays gaplessly, avoids per-segment TS timestamp discontinuities, and is supported by Safari/iOS native HLS and hls.js.
+- **Validation:** the chunk upload endpoint only accepts MP3, WAV, FLAC, OGG, AAC and M4A, and rejects other types with a clear message before any processing.
 
 ### 3. Soroban NFT Song Minting Relay Flow
 

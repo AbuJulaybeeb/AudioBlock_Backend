@@ -48,7 +48,6 @@ const ALLOWED_AUDIO_MIMES = [
   'audio/aac', // .aac
   'audio/mp4', // .m4a
   'audio/x-m4a', // .m4a (alt)
-  'audio/webm', // .webm
 ];
 
 const ALLOWED_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/jpg'];
@@ -85,7 +84,7 @@ const chunkUpload = multer({
   fileFilter: (req, file, cb) => {
     if (!ALLOWED_AUDIO_MIMES.includes(file.mimetype)) {
       return cb(
-        new Error('Invalid file type. Allowed audio formats: MP3, WAV, FLAC, OGG, AAC, M4A, WebM'),
+        new Error('Invalid file type. Allowed audio formats: MP3, WAV, FLAC, OGG, AAC, M4A'),
       );
     }
     cb(null, true);
