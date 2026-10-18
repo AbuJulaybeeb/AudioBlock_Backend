@@ -18,7 +18,7 @@ standalone worker entrypoint.
 | Process          | Primary work                                                       | Where it runs                                                               |
 | ---------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | API server       | HTTP/JSON, DB queries, Redis cache, auth, uploads (streamed to S3) | `node dist/index.js` (default CMD)                                          |
-| Song worker      | ffmpeg HLS transcode + IPFS pin, RabbitMQ consumer                 | co-located by default; standalone via `npm run worker` / `WORKER_ONLY=true` |
+| Song worker      | ffmpeg HLS packaging + IPFS pin, RabbitMQ consumer                 | co-located by default; standalone via `npm run worker` or `node dist/workers/songWorkerMain.js` |
 | Job queue worker | royalties, search-index rebuilds, admin tasks (Redis `BLPOP`)      | co-located by default                                                       |
 
 ## Recommended baseline sizing
@@ -30,7 +30,7 @@ fresh production deploy starts from a sane, consistent baseline.
 | Service                 | CPU                 | Memory               | Notes                                                                 |
 | ----------------------- | ------------------- | -------------------- | --------------------------------------------------------------------- |
 | API + co-located worker | `0.50` (min `0.25`) | `512M` (min `256M`)  | When workers are co-located, CPU headroom must cover bursty transcode |
-| Dedicated song worker   | `1.00` (min `0.75`) | `1024M` (min `512M`) | ffmpeg HLS transcode is single-threaded and CPU hungry per stream     |
+| Dedicated song worker   | `1.00` (min `0.75`) | `1024M` (min `512M`) | Provisional budget; measure HLS packaging and provider I/O     |
 | Postgres (`db`)         | `0.50`              | `512M`               | Could grow with the library; watch `shared_buffers`/index size        |
 | Redis (`redis`)         | `0.25`              | `256M`               | Cache + job queue + rate limiting; grows with key volume              |
 | RabbitMQ (`rabbitmq`)   | `0.25`              | `256M`               | Broker only; durable queue state on volume                            |
@@ -40,23 +40,20 @@ fresh production deploy starts from a sane, consistent baseline.
 
 ### Why the worker needs more than the API
 
-`ffmpeg`/`fluent-ffmpeg` transcodes audio to HLS segments in a single thread
-per job. A transcode of a several-minute track can transiently peg a full vCPU
-core and spike memory with segment/buffer state, especially for higher
-bitrates or longer files. Because the queue consumer runs each job
-sequentially by default, a burst of uploads translates directly into sustained
-CPU demand. Give the worker its own CPU share so a transcode spike cannot starve
-API responses.
+`ffmpeg`/`fluent-ffmpeg` currently packages HLS with codec copy. CPU, memory,
+disk and provider demand vary with the input and workload. Prefetch defaults to
+one active delivery per consumer; measure representative jobs before raising
+it. Give dedicated workers their own resource budget so upload processing does
+not starve API responses.
 
 ## Scaling the worker independently
 
-Because transcoding is the most CPU-intensive path, scale the worker
-separately from the API once upload volume or transcode latency becomes a
+Scale the worker separately from the API once upload volume or processing latency becomes a
 bottleneck:
 
 ```bash
 # Standalone worker process (no HTTP server)
-WORKER_ONLY=true node dist/index.js
+node dist/workers/songWorkerMain.js
 ```
 
 or via the registered script after building:
@@ -65,14 +62,16 @@ or via the registered script after building:
 npm run worker
 ```
 
-Run multiple worker instances horizontally — RabbitMQ partitions the durable
-queue across consumers, so additional worker containers share the load. Each
-worker needs roughly one full vCPU for sustained transcode throughput.
+For shared upload storage requirements, bounded prefetch, capacity estimates and
+replay limitations, follow the [worker scaling guide](worker-scaling.md). RabbitMQ
+shares deliveries across consumers; process loss can redeliver unfinished jobs.
+Use the built entry point in production images, where ts-node is not installed.
 
 ## Scaling the API
 
-The API is stateless (sessions/rate-limits/cache live in Redis, files in S3),
-so it scales horizontally behind a load balancer. When you add instances:
+The API can run behind a load balancer, but uploads and its co-located song
+consumers require shared local upload storage as described in the worker guide.
+When you add instances:
 
 - keep `ALLOWED_ORIGINS` explicit (no wildcards) in production;
 - keep the same Postgres/Redis/RabbitMQ backing services shared by all

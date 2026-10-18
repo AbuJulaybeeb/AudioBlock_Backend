@@ -368,6 +368,11 @@ export function setWorkerHealthStateForTests(state: {
 export async function startSongWorker() {
   try {
     const channel = getChannel();
+    const prefetch = Number(process.env.WORKER_PREFETCH || '1');
+    if (!Number.isSafeInteger(prefetch) || prefetch < 1) {
+      throw new Error('WORKER_PREFETCH must be a positive integer');
+    }
+    await channel.prefetch(prefetch);
     const logService = new TransactionLogService();
     const versionService = new SongVersionService();
 
@@ -410,8 +415,10 @@ export async function startSongWorker() {
       consumerTag = consumeResult.consumerTag;
       isConsuming = true;
     }
+    return isConsuming;
   } catch (error) {
     isConsuming = false;
     logger.error({ err: error }, 'Failed to start song worker');
+    return false;
   }
 }
