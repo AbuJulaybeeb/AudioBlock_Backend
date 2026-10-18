@@ -146,6 +146,12 @@ router.get('/popular', SongController.getPopularSongs);
 // Embeddable player endpoint — public, no auth, same rate limiting as streaming (Redis throttle)
 router.get('/embed/:id', EmbedController.getSongEmbed);
 
+// Listing and single-song reads. Both use optionalAuth so an artist can see
+// their own non-public songs. `/:id` is registered after every static GET path
+// above so it cannot capture them.
+router.get('/', optionalAuth, SongController.listSongs);
+router.get('/:id', optionalAuth, etagCache({ visibility: 'no-cache' }), SongController.getSong);
+
 // Soroban on-chain song minting: the artist's wallet signs, the backend
 // only builds and relays the transaction.
 router.post('/:id/onchain/prepare-mint', authArtistMiddleware, idempotency(), SongController.prepareMint);

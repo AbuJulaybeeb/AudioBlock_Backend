@@ -363,6 +363,73 @@ paths:
           description: Too many reports in the last hour.
 components:
   schemas:
+    Song:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        artist:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+              format: uuid
+            username:
+              type: string
+              nullable: true
+            name:
+              type: string
+              nullable: true
+            profileImage:
+              type: string
+              nullable: true
+        cover:
+          type: object
+          properties:
+            path:
+              type: string
+            thumbnails:
+              type: object
+              nullable: true
+              additionalProperties:
+                type: string
+        genre:
+          type: string
+          nullable: true
+        genreId:
+          type: string
+          nullable: true
+        duration:
+          type: integer
+          nullable: true
+        playCount:
+          type: integer
+        status:
+          type: string
+          enum: [processing, ready, failed]
+        mintStatus:
+          type: string
+          enum: [not_minted, pending, minted, failed]
+        onChainSongId:
+          type: string
+          nullable: true
+        onChainTokenId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        errorReason:
+          type: string
+          nullable: true
+          description: Only present for the owning artist.
     IndexedEvent:
       type: object
       properties:

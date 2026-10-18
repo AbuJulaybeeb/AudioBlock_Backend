@@ -3,6 +3,7 @@ import { AuthController } from '../controllers/AuthController';
 import { privyMfaController } from '../controllers/PrivyMfaController';
 import { requireAuth } from '../middlewares/authMiddleware';
 import { requirePrivyAuth } from '../middlewares/privyMiddleware';
+import { requireLegacyEvmAuth } from '../middlewares/legacyEvmGate';
 import {
   authRateLimiter,
   nonceRateLimiter,
@@ -15,10 +16,17 @@ const router = Router();
 
 // Apply IP+email-keyed rate limiting to all auth routes (Issue #29).
 // /nonce/:email gets its own, stricter limiter to prevent email enumeration.
-router.get('/nonce/:email', nonceRateLimiter, authController.getUserNonce);
-router.post('/register', authRateLimiter, authController.register);
-router.post('/register-listener', authRateLimiter, authController.registerListener);
-router.post('/login', authRateLimiter, authController.login);
+// The wallet-signature endpoints are legacy EVM auth and answer 410 unless
+// ENABLE_LEGACY_EVM_AUTH=true (Issue #809).
+router.get('/nonce/:email', requireLegacyEvmAuth, nonceRateLimiter, authController.getUserNonce);
+router.post('/register', requireLegacyEvmAuth, authRateLimiter, authController.register);
+router.post(
+  '/register-listener',
+  requireLegacyEvmAuth,
+  authRateLimiter,
+  authController.registerListener,
+);
+router.post('/login', requireLegacyEvmAuth, authRateLimiter, authController.login);
 
 // Email + password auth (no wallet signature required) — coexists with the
 // wallet-signature flow above. Either path issues the same JWT shape.

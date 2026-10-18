@@ -111,15 +111,6 @@ export class User {
   @Column('float', { default: 0 })
   rewardPoints!: number;
 
-  @Column('int', { default: 0 })
-  totalStreams!: number;
-
-  @Column('int', { default: 0 })
-  totalStreamTime!: number;
-
-  @Column('int', { default: 0 })
-  uniqueListeners!: number;
-
   @Column({ nullable: true })
   bio?: string;
 

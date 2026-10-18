@@ -46,6 +46,38 @@ export interface SongRequester {
 }
 
 /**
+ * Client-facing song shape. Built field by field so internal columns
+ * (`s3OriginalUrl`, moderation and AI review fields) are never returned.
+ * `errorReason` is only included for the owning artist.
+ */
+function toSongView(song: Song, isOwner: boolean) {
+  return {
+    id: song.id,
+    title: song.title,
+    description: song.description,
+    artist: song.user
+      ? {
+          id: song.user.id,
+          username: song.user.username,
+          name: song.user.name,
+          profileImage: song.user.profileImage,
+        }
+      : null,
+    cover: { path: song.coverArtPath, thumbnails: song.coverArtThumbnails },
+    genre: song.genre,
+    genreId: song.genreId,
+    duration: song.duration,
+    playCount: song.playCount,
+    status: song.status,
+    mintStatus: song.mintStatus,
+    onChainSongId: song.onChainSongId,
+    onChainTokenId: song.onChainTokenId,
+    createdAt: song.createdAt,
+    ...(isOwner && { errorReason: song.errorReason }),
+  };
+}
+
+/**
  * Parameters for {@link SongService.finalizeUpload}.
  */
 export interface FinalizeUploadOptions {
@@ -181,8 +213,80 @@ export class SongService {
     }
   }
 
-  async listSongs(query: any) {
-    return await this.songRepo.find({ take: 20 });
+  /**
+   * Single-song response for `GET /api/song/:id` (Issue #810). Songs that are
+   * flagged or not ready are a 404 unless the viewer is the owning artist.
+   *
+   * @param id - Song UUID.
+   * @param viewerId - Authenticated caller, if any.
+   */
+  async getSongView(id: string, viewerId?: string) {
+    validateUUID(id, 'id');
+    const song = await this.songRepo.findOne({ where: { id }, relations: ['user'] });
+    const isOwner = !!viewerId && song?.artistId === viewerId;
+    if (!song || (!isOwner && (song.status !== 'ready' || song.flagged))) {
+      throw AppError.notFound('Song not found');
+    }
+    return toSongView(song, isOwner);
+  }
+
+  /**
+   * Filtered, paginated song listing for `GET /api/song` (Issue #811).
+   * Public callers only ever see ready, unflagged songs; an artist listing
+   * their own songs (`artistId` equal to the caller) sees every status and may
+   * filter by it.
+   *
+   * @param query - Validated query parameters.
+   * @param viewerId - Authenticated caller, if any.
+   */
+  async listSongs(query: ListSongsQueryDTO, viewerId?: string) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const isOwner = !!viewerId && query.artistId === viewerId;
+    if (query.status && !isOwner) {
+      throw AppError.authorization('The status filter is only available for your own songs');
+    }
+
+    const qb = this.songRepo.createQueryBuilder('song').leftJoinAndSelect('song.user', 'artist');
+    if (!isOwner) {
+      qb.where('song.status = :ready', { ready: 'ready' }).andWhere('song.flagged = false');
+    } else if (query.status) {
+      qb.where('song.status = :status', { status: query.status });
+    }
+
+    if (query.artistId) qb.andWhere('song.artistId = :artistId', { artistId: query.artistId });
+    if (query.genreId) qb.andWhere('song.genreId = :genreId', { genreId: query.genreId });
+    if (query.mintStatus)
+      qb.andWhere('song.mintStatus = :mintStatus', { mintStatus: query.mintStatus });
+    if (query.tag) {
+      qb.andWhere((q) => {
+        const tagged = q
+          .subQuery()
+          .select('st.songId')
+          .from(SongTag, 'st')
+          .innerJoin('st.tag', 't')
+          .where('t.slug = :tag')
+          .getQuery();
+        return `song.id IN ${tagged}`;
+      }).setParameter('tag', query.tag.toLowerCase());
+    }
+
+    if (query.sort === 'popular') qb.orderBy('song.playCount', 'DESC');
+    else if (query.sort === 'title') qb.orderBy('song.title', 'ASC');
+    else qb.orderBy('song.createdAt', 'DESC');
+    qb.addOrderBy('song.id', 'ASC');
+
+    const [songs, total] = await qb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return paginatedResponse(
+      songs.map((song) => toSongView(song, isOwner)),
+      total,
+      page,
+      limit,
+    );
   }
 
   private songRepo: Repository<Song>;
