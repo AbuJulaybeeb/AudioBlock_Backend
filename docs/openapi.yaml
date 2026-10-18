@@ -328,6 +328,41 @@ paths:
           description: The caller does not own the song.
         '404':
           description: Version not found.
+  /api/song/{id}/versions/{version}/rollback:
+    post:
+      summary: Roll back a song to a prior version
+      description: Owning artist only. Creates a new active version copying the specified historical revision's metadata and audio assets, preserving complete version history without mutation (Issue #441).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: version
+          in: path
+          required: true
+          description: 1-based historical version number to roll back to.
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                changeNote:
+                  type: string
+                  description: Optional explanation of why the rollback was performed.
+      responses:
+        '201':
+          description: Created new version copying the target revision's fields.
+        '403':
+          description: The caller does not own the song.
+        '404':
+          description: Song or target version not found.
   /api/song/{id}/report:
     post:
       summary: Report a song

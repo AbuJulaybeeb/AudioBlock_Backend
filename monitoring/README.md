@@ -10,8 +10,9 @@ provisioned automatically on container startup.
 ```
 monitoring/
 ├── prometheus.yml        # Prometheus scrape config (targets the backend /metrics)
+├── promtail.yml          # Promtail log shipping config (targets Loki) (Issue #380)
 ├── grafana/
-│   └── provisioning.yml  # Grafana provisioning: Prometheus datasource + dashboards provider
+│   └── provisioning.yml  # Grafana provisioning: Prometheus & Loki datasources + dashboards provider
 └── dashboards/
     ├── audioblock-app.json   # Express app / HTTP / DB-pool / cache / royalties dashboard
     └── audioblock-node.json  # Host system (CPU / memory / disk / network) overview
@@ -19,7 +20,7 @@ monitoring/
 
 ## How it works
 
-`docker-compose.yml` starts a Prometheus instance and a Grafana instance.
+`docker-compose.yml` starts Prometheus, Grafana, Grafana Loki, and Promtail.
 
 - Prometheus scrapes the backend's `GET /metrics` endpoint (exposed by
   `prom-client` in `src/services/MetricsService.ts`, served by
@@ -28,10 +29,15 @@ monitoring/
 - The standalone indexer worker serves its process-local metrics on port 9464;
   the `monitoring`, `observability`, and `full` Compose profiles start it and
   let Prometheus scrape `indexer:9464`.
+- Log aggregation is handled by Grafana Loki and Promtail (Issue #380):
+  Promtail collects container stdout JSON logs, redacts any sensitive tokens,
+  and ships them to Loki at `http://loki:3100`. See
+  [`docs/logging-and-aggregation.md`](../docs/logging-and-aggregation.md) for
+  the complete runbook and LogQL query examples.
 - Grafana is provisioned entirely from disk:
   - `./monitoring/grafana/provisioning.yml` is mounted to
     `/etc/grafana/provisioning/provisioning.yml` — it defines the Prometheus
-    datasource and a file-based dashboard provider.
+    and Loki datasources and a file-based dashboard provider.
   - `./monitoring/dashboards/` is mounted to
     `/etc/grafana/provisioning/dashboards` — this is the provider's
     `path`, so every dashboard JSON in the directory is automatically loaded.

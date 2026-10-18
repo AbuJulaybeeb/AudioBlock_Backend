@@ -160,6 +160,93 @@ export class SongVersionService {
   }
 
   /**
+   * Roll back a song's metadata and served revision to a prior version (Issue #441).
+   *
+   * Rather than mutating history, this creates a new version whose metadata
+   * and assets copy the specified historical version, and promotes it to active.
+   *
+   * @param songId - ID of the song.
+   * @param targetVersionNumber - The 1-based historical revision to restore.
+   * @param artistId - ID of the requesting artist.
+   * @param changeNote - Optional note explaining the rollback.
+   * @returns The newly created active version copying the historical version.
+   * @throws {AppError} 404 when song or version does not exist, 403 when caller is not the owning artist.
+   */
+  async rollbackVersion(
+    songId: string,
+    targetVersionNumber: number,
+    artistId: string,
+    changeNote?: string,
+  ): Promise<SongVersion> {
+    const song = await this.songRepo.findOneBy({ id: songId });
+    if (!song) {
+      throw AppError.notFound('Song not found', undefined, 'SONG_NOT_FOUND');
+    }
+    if (song.artistId !== artistId) {
+      throw AppError.authorization(
+        'Not authorized to roll back this song',
+        undefined,
+        'NOT_SONG_OWNER',
+      );
+    }
+
+    const targetVersion = await this.getVersion(songId, targetVersionNumber);
+
+    const nextNumber = (await this.getLatestVersionNumber(songId)) + 1;
+
+    // Demote existing revisions so only the new rollback version is active
+    await this.versionRepo.update({ songId, isActive: true }, { isActive: false });
+
+    // Create a new version copying the target version's fields (history is preserved, never mutated)
+    const newVersion = this.versionRepo.create({
+      songId,
+      versionNumber: nextNumber,
+      isActive: true,
+      title: targetVersion.title,
+      description: targetVersion.description,
+      genre: targetVersion.genre,
+      composers: targetVersion.composers,
+      coverArtPath: targetVersion.coverArtPath,
+      s3OriginalUrl: targetVersion.s3OriginalUrl,
+      hlsMasterUrl: targetVersion.hlsMasterUrl,
+      ipfsCid: targetVersion.ipfsCid,
+      metadataCid: targetVersion.metadataCid,
+      duration: targetVersion.duration,
+      loudness: targetVersion.loudness,
+      status: targetVersion.status,
+      changeNote: changeNote ?? `Rolled back to version ${targetVersionNumber}`,
+      createdBy: artistId,
+    });
+
+    await this.versionRepo.save(newVersion);
+
+    // Update parent song to point at the rolled-back revision
+    song.title = newVersion.title ?? song.title;
+    if (newVersion.description !== undefined) song.description = newVersion.description as string;
+    if (newVersion.genre !== undefined) song.genre = newVersion.genre as string;
+    if (newVersion.composers !== undefined) song.composers = newVersion.composers;
+    if (newVersion.coverArtPath !== undefined) song.coverArtPath = newVersion.coverArtPath;
+    if (newVersion.s3OriginalUrl !== undefined) song.s3OriginalUrl = newVersion.s3OriginalUrl;
+    if (newVersion.hlsMasterUrl !== undefined) song.hlsMasterUrl = newVersion.hlsMasterUrl;
+    if (newVersion.ipfsCid !== undefined) song.ipfsCid = newVersion.ipfsCid;
+    if (newVersion.metadataCid !== undefined) song.metadataCid = newVersion.metadataCid;
+    if (newVersion.duration !== undefined) song.duration = newVersion.duration;
+    if (newVersion.loudness !== undefined) song.loudness = newVersion.loudness;
+    song.status = newVersion.status;
+    song.errorReason = null;
+    await this.songRepo.save(song);
+
+    await CacheService.clearSong(songId);
+
+    logger.info(
+      { songId, fromVersion: targetVersionNumber, toVersion: nextNumber },
+      'Rolled back song version',
+    );
+
+    return newVersion;
+  }
+
+  /**
    * Version history can include unreleased audio, so only the owning artist
    * and admins may read it.
    *

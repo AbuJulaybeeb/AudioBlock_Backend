@@ -21,6 +21,7 @@ import { ActivityService } from './ActivityService';
 import logger from '../config/logger';
 import { songsUploadedTotal } from './MetricsService';
 import { deleteS3Objects, deleteS3Prefix, s3KeyFromUrl } from '../utils/s3Cleanup';
+import { paginatedResponse } from '../utils/pagination';
 
 const activityService = new ActivityService();
 
@@ -146,10 +147,6 @@ export class SongService {
     // Invalidate the cached streaming manifest so updated metadata is
     // reflected immediately, not only after TTL expiry (#335).
     await CacheService.clearSong(id);
-    if (result.status === 'ready' && !result.flagged) {
-      const indexable = await this.songRepo.findOne({ where: { id }, relations: ['user'] });
-      if (indexable) SearchIndexService.scheduleIndexUpdate(indexable);
-    }
     return result;
   }
 
@@ -172,13 +169,11 @@ export class SongService {
       song.flaggedBy = requester.id;
       song.flagReason = 'Hidden by owner (song is minted on-chain)';
       await this.songRepo.save(song);
-      SearchIndexService.scheduleRemoval(id);
       await CacheService.clearSong(id);
       return { success: true, hidden: true };
     }
 
     await this.songRepo.remove(song);
-    SearchIndexService.scheduleRemoval(id);
     // Invalidate cache on delete so a re-created song with the same ID
     // doesn't serve stale data (#335).
     await CacheService.clearSong(id);
