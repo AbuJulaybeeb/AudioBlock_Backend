@@ -2,12 +2,12 @@ import { Repository } from 'typeorm';
 import AppDataSource from '../config/db';
 import { User, UserRole } from '../entities/User';
 import { CreateUserDTO } from '../dtos/CreateUserDTO';
-import { verifyMessage } from 'ethers';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import redis from '../config/redis';
 import { TransactionLog } from '../entities/TransactionLog';
 import { AppError } from '../errors/AppError';
+import { SongStatsService, ArtistLifetimeTotals } from './Song/SongStatsService';
 import {
   validateRequired,
   validateEmail,
@@ -66,6 +66,8 @@ export class UserService {
     validateEmail(dto.email);
     validateEthereumAddress(dto.walletAddress);
 
+    // Loaded on demand so `ethers` is only pulled in by the legacy EVM signup path.
+    const { verifyMessage } = await import('ethers');
     const recoveredAddress = verifyMessage(dto.message, dto.signature);
 
     if (recoveredAddress.toLowerCase() !== dto.walletAddress.toLowerCase()) {
@@ -266,7 +268,7 @@ export class UserService {
       profileImage?: string;
       isProfilePublic?: boolean;
     },
-  ): Promise<Partial<User>> {
+  ): Promise<Partial<User> & ArtistLifetimeTotals> {
     validateRequired(userId, 'userId');
 
     const user = await this.userRepo.findOneBy({ id: userId });
@@ -309,13 +311,13 @@ export class UserService {
     }
 
     const saved = await this.userRepo.save(user);
-    return this.toProfileResponse(saved);
+    return await this.toProfileResponse(saved);
   }
 
   /**
    * Get the authenticated user's own full profile (Issue #83).
    */
-  async getOwnProfile(userId: string): Promise<Partial<User>> {
+  async getOwnProfile(userId: string): Promise<Partial<User> & ArtistLifetimeTotals> {
     validateRequired(userId, 'userId');
 
     const user = await this.userRepo.findOneBy({ id: userId });
@@ -323,13 +325,15 @@ export class UserService {
       throw AppError.notFound(ERROR_MESSAGES.USER_NOT_FOUND);
     }
 
-    return this.toProfileResponse(user);
+    return await this.toProfileResponse(user);
   }
 
   /**
    * Get another user's public profile, respecting privacy settings (Issue #83).
    */
-  async getPublicProfile(userId: string): Promise<Partial<User> | { private: true }> {
+  async getPublicProfile(
+    userId: string,
+  ): Promise<(Partial<User> & ArtistLifetimeTotals) | { private: true }> {
     validateRequired(userId, 'userId');
 
     const user = await this.userRepo.findOneBy({ id: userId });
@@ -351,15 +355,24 @@ export class UserService {
       pageCover: user.pageCover,
       website: user.website,
       role: user.role,
-      totalStreams: user.totalStreams,
-      uniqueListeners: user.uniqueListeners,
+      ...(await this.lifetimeStats(user.id)),
     };
+  }
+
+  /**
+   * Stream stats shown on profiles, computed from play events rather than
+   * stored on the user (Issue #807).
+   */
+  private async lifetimeStats(userId: string) {
+    const { totalStreams, totalStreamTime, uniqueListeners } =
+      await new SongStatsService().getArtistLifetimeTotals(userId);
+    return { totalStreams, totalStreamTime, uniqueListeners };
   }
 
   /**
    * Map a User entity to a clean profile response shape.
    */
-  private toProfileResponse(user: User): Partial<User> {
+  private async toProfileResponse(user: User) {
     return {
       id: user.id,
       username: user.username,
@@ -375,8 +388,7 @@ export class UserService {
       stellarPublicKey: user.stellarPublicKey,
       isProfilePublic: user.isProfilePublic,
       twitterUsername: user.twitterUsername,
-      totalStreams: user.totalStreams,
-      uniqueListeners: user.uniqueListeners,
+      ...(await this.lifetimeStats(user.id)),
       rewardPoints: user.rewardPoints,
       emailVerified: user.emailVerified,
       createdAt: user.createdAt,
@@ -403,9 +415,6 @@ export class UserService {
       profileImage: user.profileImage,
       name: user.name,
       rewardPoints: user.rewardPoints,
-      totalStreams: user.totalStreams,
-      totalStreamTime: user.totalStreamTime,
-      uniqueListeners: user.uniqueListeners,
     };
 
     return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRATION });

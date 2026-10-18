@@ -1,21 +1,24 @@
-import { WalletService } from './../services/Dynamic/WalletService';
 import { TransactionLogService } from '../services/TransactionLogService';
 
 import { handleError } from '../utils/helpers';
 import { Request, Response } from 'express';
 
 export class WalletController {
-  private walletService: WalletService;
   private transactionLogService: TransactionLogService;
 
   constructor() {
-    this.walletService = new WalletService();
     this.transactionLogService = new TransactionLogService();
   }
 
+  /** Loaded on demand so the Dynamic Labs SDK is not pulled in unless the legacy EVM routes are used. */
+  private loadWalletService = async () => {
+    const { WalletService } = await import('./../services/Dynamic/WalletService');
+    return new WalletService();
+  };
+
   createEvmWallet = async (req: Request, res: Response) => {
     try {
-      const wallet = await this.walletService.createWallet();
+      const wallet = await (await this.loadWalletService()).createWallet();
       res.status(201).json({ success: true, message: 'Wallet created successfully', wallet });
     } catch (error) {
       handleError(req, res, error);
@@ -25,7 +28,7 @@ export class WalletController {
   signMessage = async (req: Request, res: Response) => {
     try {
       const payload = req.body;
-      const signature = await this.walletService.signMessage(payload);
+      const signature = await (await this.loadWalletService()).signMessage(payload);
       res.status(200).json({ success: true, message: 'Message signed successfully', signature });
     } catch (error) {
       handleError(req, res, error);

@@ -140,12 +140,7 @@ export class AccountMergeService {
       }
 
       // Aggregate stats
-      primaryUser.totalStreams += secondaryUser.totalStreams;
-      primaryUser.totalStreamTime += secondaryUser.totalStreamTime;
       primaryUser.rewardPoints += secondaryUser.rewardPoints;
-      if (secondaryUser.uniqueListeners > primaryUser.uniqueListeners) {
-        primaryUser.uniqueListeners = secondaryUser.uniqueListeners;
-      }
 
       // Mark secondary account for deletion
       secondaryUser.deletionRequestedAt = new Date();

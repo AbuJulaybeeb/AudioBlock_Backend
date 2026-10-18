@@ -20,16 +20,4 @@ export class UpdateUserDTO {
   @IsOptional()
   @IsNumber()
   rewardPoints?: number;
-
-  @IsOptional()
-  @IsNumber()
-  totalStreams?: number;
-
-  @IsOptional()
-  @IsNumber()
-  totalStreamTime?: number;
-
-  @IsOptional()
-  @IsNumber()
-  uniqueListeners?: number;
 }

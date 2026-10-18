@@ -76,13 +76,6 @@ router.put(
   AdminController.resolveCommentReport,
 );
 
-// Search index maintenance (Issue #135)
-router.post(
-  '/search/rebuild',
-  requirePermission(Permission.SEARCH_MANAGE),
-  SongController.rebuildSearchIndex,
-);
-
 // Background job queue visibility (Issue #132)
 router.get('/jobs', requirePermission(Permission.JOBS_VIEW), JobController.getJobs);
 router.get('/jobs/:id', requirePermission(Permission.JOBS_VIEW), JobController.getJob);

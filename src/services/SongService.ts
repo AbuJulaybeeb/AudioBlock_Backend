@@ -1,7 +1,7 @@
 import { FindOptionsOrder, Repository } from 'typeorm';
 import { Song } from '../entities/Song';
 import { SongVersion } from '../entities/SongVersion';
-import { User } from '../entities/User';
+import { User, UserRole } from '../entities/User';
 import { TransactionLog } from '../entities/TransactionLog';
 import { RoyaltyTemplate } from '../entities/RoyaltyTemplate';
 import AppDataSource from '../config/db';
@@ -14,15 +14,68 @@ import { SorobanContracts } from '../config/soroban';
 import { SorobanService, addressArg, stringArg, u64Arg } from './Soroban/SorobanService';
 import { PreparedTransaction } from './Artist/ArtistService';
 import { ScanService } from './ScanService';
-import { SearchIndexService } from './SearchIndexService';
 import { CacheService } from './CacheService';
 import { SongVersionService } from './Song/SongVersionService';
 import { AppError } from '../errors/AppError';
 import { ActivityService } from './ActivityService';
 import logger from '../config/logger';
 import { songsUploadedTotal } from './MetricsService';
+import { deleteS3Objects, deleteS3Prefix, s3KeyFromUrl } from '../utils/s3Cleanup';
 
 const activityService = new ActivityService();
+
+/** Song fields an owner may edit via `PATCH /api/song/:id`. */
+const EDITABLE_SONG_FIELDS = [
+  'title',
+  'description',
+  'genreId',
+  'composers',
+  'lyrics',
+  'language',
+] as const;
+
+/** Editable fields that are part of the on-chain metadata once a song is minted. */
+const MINTED_IMMUTABLE_FIELDS = ['title', 'description', 'genreId'] as const;
+
+export type UpdateSongInput = Partial<Pick<Song, (typeof EDITABLE_SONG_FIELDS)[number]>>;
+
+/** The authenticated caller of an owner-restricted song operation. */
+export interface SongRequester {
+  id: string;
+  role?: UserRole;
+}
+
+/**
+ * Client-facing song shape. Built field by field so internal columns
+ * (`s3OriginalUrl`, moderation and AI review fields) are never returned.
+ * `errorReason` is only included for the owning artist.
+ */
+function toSongView(song: Song, isOwner: boolean) {
+  return {
+    id: song.id,
+    title: song.title,
+    description: song.description,
+    artist: song.user
+      ? {
+          id: song.user.id,
+          username: song.user.username,
+          name: song.user.name,
+          profileImage: song.user.profileImage,
+        }
+      : null,
+    cover: { path: song.coverArtPath, thumbnails: song.coverArtThumbnails },
+    genre: song.genre,
+    genreId: song.genreId,
+    duration: song.duration,
+    playCount: song.playCount,
+    status: song.status,
+    mintStatus: song.mintStatus,
+    onChainSongId: song.onChainSongId,
+    onChainTokenId: song.onChainTokenId,
+    createdAt: song.createdAt,
+    ...(isOwner && { errorReason: song.errorReason }),
+  };
+}
 
 /**
  * Parameters for {@link SongService.finalizeUpload}.
@@ -60,27 +113,180 @@ export class SongService {
     return await this.songRepo.save(song);
   }
 
-  async updateSong(id: string, data: any) {
+  /**
+   * Update the editable metadata of a song.
+   *
+   * Only the fields in {@link EDITABLE_SONG_FIELDS} are written. Once a song is
+   * minted, the fields embedded in its on-chain metadata cannot change.
+   *
+   * @throws {AppError} 403 when the caller is not the owner (or an admin), 409
+   *   when a minted song's on-chain field is changed.
+   */
+  async updateSong(id: string, data: UpdateSongInput, requester: SongRequester) {
     const song = await this.getSong(id);
-    Object.assign(song, data);
+    this.assertCanModify(song, requester);
+
+    if (song.mintStatus === 'minted') {
+      const locked = MINTED_IMMUTABLE_FIELDS.filter(
+        (field) => data[field] !== undefined && data[field] !== song[field],
+      );
+      if (locked.length > 0) {
+        throw AppError.conflict(
+          `Cannot change ${locked.join(', ')} after the song is minted on-chain`,
+          { fields: locked },
+          'SONG_FIELD_IMMUTABLE',
+        );
+      }
+    }
+
+    for (const field of EDITABLE_SONG_FIELDS) {
+      if (data[field] !== undefined) song[field] = data[field] as never;
+    }
     const result = await this.songRepo.save(song);
     // Invalidate the cached streaming manifest so updated metadata is
     // reflected immediately, not only after TTL expiry (#335).
     await CacheService.clearSong(id);
+    if (result.status === 'ready' && !result.flagged) {
+      const indexable = await this.songRepo.findOne({ where: { id }, relations: ['user'] });
+      if (indexable) SearchIndexService.scheduleIndexUpdate(indexable);
+    }
     return result;
   }
 
-  async deleteSong(id: string) {
+  /**
+   * Delete a song.
+   *
+   * An unminted song is removed along with its stored files. A minted song's
+   * on-chain token still exists, so it is hidden (flagged) instead and its
+   * files are kept.
+   *
+   * @throws {AppError} 403 when the caller is not the owner (or an admin).
+   */
+  async deleteSong(id: string, requester: SongRequester) {
     const song = await this.getSong(id);
+    this.assertCanModify(song, requester);
+
+    if (song.mintStatus === 'minted' || song.mintStatus === 'pending') {
+      song.flagged = true;
+      song.flaggedAt = new Date();
+      song.flaggedBy = requester.id;
+      song.flagReason = 'Hidden by owner (song is minted on-chain)';
+      await this.songRepo.save(song);
+      SearchIndexService.scheduleRemoval(id);
+      await CacheService.clearSong(id);
+      return { success: true, hidden: true };
+    }
+
     await this.songRepo.remove(song);
+    SearchIndexService.scheduleRemoval(id);
     // Invalidate cache on delete so a re-created song with the same ID
     // doesn't serve stale data (#335).
     await CacheService.clearSong(id);
-    return { success: true };
+    await this.deleteSongFiles(id, song);
+    return { success: true, hidden: false };
   }
 
-  async listSongs(query: any) {
-    return await this.songRepo.find({ take: 20 });
+  /** Best-effort removal of a deleted song's original upload, HLS segments and cover art. */
+  private async deleteSongFiles(id: string, song: Song) {
+    try {
+      const keys = [
+        song.s3OriginalUrl,
+        song.coverArtPath,
+        ...Object.values(song.coverArtThumbnails ?? {}),
+      ]
+        .map((url) => s3KeyFromUrl(url))
+        .filter((key): key is string => key !== null);
+      await deleteS3Objects(keys);
+      await deleteS3Prefix(`songs/${id}/hls/`);
+    } catch (err) {
+      logger.error({ err, songId: id }, 'Failed to clean up S3 objects for deleted song');
+    }
+  }
+
+  private assertCanModify(song: Song, requester: SongRequester) {
+    if (song.artistId !== requester.id && requester.role !== UserRole.ADMIN) {
+      throw AppError.authorization(
+        'You can only modify your own songs',
+        undefined,
+        'NOT_SONG_OWNER',
+      );
+    }
+  }
+
+  /**
+   * Single-song response for `GET /api/song/:id` (Issue #810). Songs that are
+   * flagged or not ready are a 404 unless the viewer is the owning artist.
+   *
+   * @param id - Song UUID.
+   * @param viewerId - Authenticated caller, if any.
+   */
+  async getSongView(id: string, viewerId?: string) {
+    validateUUID(id, 'id');
+    const song = await this.songRepo.findOne({ where: { id }, relations: ['user'] });
+    const isOwner = !!viewerId && song?.artistId === viewerId;
+    if (!song || (!isOwner && (song.status !== 'ready' || song.flagged))) {
+      throw AppError.notFound('Song not found');
+    }
+    return toSongView(song, isOwner);
+  }
+
+  /**
+   * Filtered, paginated song listing for `GET /api/song` (Issue #811).
+   * Public callers only ever see ready, unflagged songs; an artist listing
+   * their own songs (`artistId` equal to the caller) sees every status and may
+   * filter by it.
+   *
+   * @param query - Validated query parameters.
+   * @param viewerId - Authenticated caller, if any.
+   */
+  async listSongs(query: ListSongsQueryDTO, viewerId?: string) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const isOwner = !!viewerId && query.artistId === viewerId;
+    if (query.status && !isOwner) {
+      throw AppError.authorization('The status filter is only available for your own songs');
+    }
+
+    const qb = this.songRepo.createQueryBuilder('song').leftJoinAndSelect('song.user', 'artist');
+    if (!isOwner) {
+      qb.where('song.status = :ready', { ready: 'ready' }).andWhere('song.flagged = false');
+    } else if (query.status) {
+      qb.where('song.status = :status', { status: query.status });
+    }
+
+    if (query.artistId) qb.andWhere('song.artistId = :artistId', { artistId: query.artistId });
+    if (query.genreId) qb.andWhere('song.genreId = :genreId', { genreId: query.genreId });
+    if (query.mintStatus)
+      qb.andWhere('song.mintStatus = :mintStatus', { mintStatus: query.mintStatus });
+    if (query.tag) {
+      qb.andWhere((q) => {
+        const tagged = q
+          .subQuery()
+          .select('st.songId')
+          .from(SongTag, 'st')
+          .innerJoin('st.tag', 't')
+          .where('t.slug = :tag')
+          .getQuery();
+        return `song.id IN ${tagged}`;
+      }).setParameter('tag', query.tag.toLowerCase());
+    }
+
+    if (query.sort === 'popular') qb.orderBy('song.playCount', 'DESC');
+    else if (query.sort === 'title') qb.orderBy('song.title', 'ASC');
+    else qb.orderBy('song.createdAt', 'DESC');
+    qb.addOrderBy('song.id', 'ASC');
+
+    const [songs, total] = await qb
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return paginatedResponse(
+      songs.map((song) => toSongView(song, isOwner)),
+      total,
+      page,
+      limit,
+    );
   }
 
   private songRepo: Repository<Song>;
@@ -190,6 +396,10 @@ export class SongService {
 
     if (song.artistId !== userId) {
       throw Object.assign(new Error('Not authorized to modify this song'), { statusCode: 403 });
+    }
+
+    if (song.mintStatus === 'pending' || song.mintStatus === 'minted') {
+      throw AppError.conflict('Royalty splits cannot be changed after minting');
     }
 
     const templateRepo = AppDataSource.getRepository(RoyaltyTemplate);
@@ -519,8 +729,11 @@ export class SongService {
   /**
    * Search songs by title / artist / keywords (Issue #135, enhanced per #82).
    *
-   * Uses full-text search across song title, artist name (via JOIN), genre,
-   * and composers with relevance ranking. Results include artist metadata.
+   * Matches case-insensitively across song title, artist name and username
+   * (via JOIN), genre, composers and description. The `ILIKE '%term%'` lookups
+   * are served by pg_trgm GIN indexes (see the AddSongSearchTrigramIndexes
+   * migration). Results are ranked by match tier (exact / prefix / contains),
+   * then trigram similarity, then play count, and include artist metadata.
    * Minimum query length: 2 characters.
    *
    * @param query  - Search query string (min 2 chars).
@@ -555,14 +768,17 @@ export class SongService {
       .leftJoinAndSelect('song.user', 'artist')
       .where('song.status = :status', { status: 'ready' })
       .andWhere('song.flagged = false')
+      // One index-backed lookup per searched column. A single OR across the songs
+      // and users tables cannot use the trigram indexes, so each branch is
+      // resolved separately and the matches are unioned.
       .andWhere(
-        `(
-          song.title ILIKE :like OR
-          song.genre ILIKE :like OR
-          song.composers ILIKE :like OR
-          song.description ILIKE :like OR
-          artist.name ILIKE :like OR
-          artist.username ILIKE :like
+        `song.id IN (
+          SELECT id FROM songs WHERE title ILIKE :like
+          UNION SELECT id FROM songs WHERE genre ILIKE :like
+          UNION SELECT id FROM songs WHERE composers ILIKE :like
+          UNION SELECT id FROM songs WHERE description ILIKE :like
+          UNION SELECT s.id FROM songs s JOIN users u ON u.id = s."artistId"
+            WHERE u.name ILIKE :like OR u.username ILIKE :like
         )`,
         { like },
       )
@@ -582,12 +798,17 @@ export class SongService {
         END`,
         'relevance',
       )
+      .addSelect(
+        'GREATEST(similarity(song.title, :exact), similarity(artist.name, :exact))',
+        'similarity',
+      )
       .setParameters({
         like,
         exact: trimmed,
         prefix: `${trimmed}%`,
       })
       .orderBy('relevance', 'DESC')
+      .addOrderBy('similarity', 'DESC')
       .addOrderBy('song.playCount', 'DESC')
       .skip((safePage - 1) * safeLimit)
       .take(safeLimit);
@@ -702,19 +923,6 @@ export class SongService {
   }
 
   /**
-   * Rebuild the entire search index from the current ready, unflagged catalog.
-   *
-   * @returns Number of songs indexed.
-   */
-  async rebuildSearchIndex(): Promise<number> {
-    const songs = await this.songRepo.find({
-      where: { status: 'ready', flagged: false },
-      relations: ['user'],
-    });
-    return SearchIndexService.rebuild(songs);
-  }
-
-  /**
    * Flag a song as inappropriate, removing it from search results and creating
    * an audit log entry.
    *
@@ -740,9 +948,6 @@ export class SongService {
       action: 'song_flag',
       details: { songId, reason: reason || null },
     });
-
-    // Flagged songs must not surface in search results (Issue #135).
-    SearchIndexService.scheduleRemoval(songId);
 
     return song;
   }
@@ -772,15 +977,6 @@ export class SongService {
       action: 'song_unflag',
       details: { songId },
     });
-
-    // Restore the song to the search index once it's unflagged (Issue #135).
-    if (song.status === 'ready') {
-      const full = await this.songRepo.findOne({
-        where: { id: songId },
-        relations: ['user'],
-      });
-      if (full) SearchIndexService.scheduleIndexUpdate(full);
-    }
 
     return song;
   }
@@ -823,7 +1019,8 @@ export class SongService {
     if (!song) {
       throw AppError.notFound('Song not found', undefined, 'SONG_NOT_FOUND');
     }
-    if (!song.lyrics) {
+    // Lyrics are only served once the artist has confirmed they hold the rights.
+    if (!song.lyrics || !song.lyricsRightsConfirmedAt) {
       throw AppError.notFound('Lyrics not found for this song', undefined, 'LYRICS_NOT_FOUND');
     }
 

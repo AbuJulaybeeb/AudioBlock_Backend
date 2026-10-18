@@ -8,6 +8,8 @@ import { Song } from '../entities/Song';
 import { PinataService } from './PinataService';
 import { AppError } from '../errors/AppError';
 import { validateFileContent } from '../utils/contentSniffing';
+import { deleteS3Objects, s3KeyFromUrl } from '../utils/s3Cleanup';
+import { CacheService } from './CacheService';
 import logger from '../config/logger';
 
 const THUMBNAIL_SIZES = [150, 300, 600];
@@ -45,6 +47,11 @@ export class CoverArtService {
    * @param songId - Song to associate the cover art with.
    * @param userId - Authenticated user; must own the song.
    * @param file   - Multer file (buffer + originalname + mimetype).
+   * Replacing the cover regenerates the thumbnails, deletes the previous cover
+   * from S3 when it was stored there, and clears the song cache. For a minted
+   * song only the off-chain cover changes; the image referenced by the
+   * on-chain metadata is immutable.
+   *
    * @returns The updated Song entity.
    * @throws AppError when the song is missing, the user is not the owner, or
    * the file format is unsupported.
@@ -83,6 +90,8 @@ export class CoverArtService {
       );
     }
 
+    const previousUrls = [song.coverArtPath, ...Object.values(song.coverArtThumbnails ?? {})];
+
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cover-art-'));
     try {
       const originalPath = path.join(workDir, `original${extension}`);
@@ -111,7 +120,17 @@ export class CoverArtService {
       song.coverArtPath = `${this.gatewayBase}/${originalRes.cid}`;
 
       logger.info({ songId, cid: originalRes.cid }, 'Cover art uploaded and pinned');
-      return this.songRepo.save(song);
+      const saved = await this.songRepo.save(song);
+
+      await CacheService.clearSong(songId);
+      try {
+        await deleteS3Objects(
+          previousUrls.map((url) => s3KeyFromUrl(url)).filter((key): key is string => key !== null),
+        );
+      } catch (err) {
+        logger.error({ err, songId }, 'Failed to delete previous cover art from S3');
+      }
+      return saved;
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }

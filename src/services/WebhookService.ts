@@ -160,17 +160,26 @@ export class WebhookService {
       ...data,
     };
 
-    // Guard for unit tests where AppDataSource is mocked without find
-    if (!this.subscriptionRepo || typeof (this.subscriptionRepo as any).find !== 'function') {
+    // Guard for unit tests where AppDataSource is mocked without a query builder
+    if (
+      !this.subscriptionRepo ||
+      typeof (this.subscriptionRepo as any).createQueryBuilder !== 'function'
+    ) {
       logger.debug({ eventType }, 'Webhook publish skipped — repo not available (test mock)');
       return;
     }
 
-    // Fetch active subscriptions that match this event
-    // For simplicity, load all active and filter in-memory (simple-array matching)
-    let allActive: WebhookSubscription[] = [];
+    // Match in SQL: '*' and empty/null eventTypes mean all events
+    let matched: WebhookSubscription[] = [];
     try {
-      allActive = await this.subscriptionRepo.find({ where: { isActive: true } });
+      matched = await this.subscriptionRepo
+        .createQueryBuilder('sub')
+        .where('sub.isActive = true')
+        .andWhere(
+          `(sub."eventTypes" && ARRAY[:eventType, '*']::text[] OR sub."eventTypes" IS NULL OR cardinality(sub."eventTypes") = 0)`,
+          { eventType },
+        )
+        .getMany();
     } catch (e) {
       logger.debug(
         { eventType, err: (e as Error).message },
@@ -178,10 +187,6 @@ export class WebhookService {
       );
       return;
     }
-    const matched = allActive.filter((sub) => {
-      const types = sub.eventTypes || [];
-      return types.includes('*') || types.includes(eventType) || types.length === 0;
-    });
 
     if (matched.length === 0) {
       logger.debug({ eventType }, 'No webhook subscriptions matched event');

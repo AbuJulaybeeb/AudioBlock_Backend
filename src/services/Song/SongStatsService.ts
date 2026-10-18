@@ -61,6 +61,14 @@ export interface ArtistStats {
   generatedAt: string;
 }
 
+/** Lifetime stream figures for an artist, derived from play events. */
+export interface ArtistLifetimeTotals {
+  totalStreams: number;
+  /** Sum of the played songs' durations (seconds), one full duration per play. */
+  totalStreamTime: number;
+  uniqueListeners: number;
+}
+
 /** Parse and validate a `window` query parameter, defaulting to 30d. */
 export function parseWindow(raw: unknown): StatsWindow {
   if (raw === undefined || raw === null || raw === '') return '30d';
@@ -231,6 +239,42 @@ export class SongStatsService {
 
     await CacheService.set(cacheKey, stats, STATS_CACHE_TTL_MS);
     return stats;
+  }
+
+  /**
+   * Lifetime plays, listening time and unique listeners across every song the
+   * artist owns, computed from `song_play_events` (Issue #807). An artist with
+   * no songs gets zeros rather than a 404.
+   *
+   * @param artistId - ID of the artist User.
+   */
+  async getArtistLifetimeTotals(artistId: string): Promise<ArtistLifetimeTotals> {
+    const cacheKey = `stats:artist:${artistId}:lifetime`;
+    const cached = await CacheService.get<ArtistLifetimeTotals>(cacheKey);
+    if (cached) return cached;
+
+    const songs = await this.songRepo.find({ where: { artistId }, select: ['id'] });
+    const songIds = songs.map((s) => s.id);
+
+    let totals: ArtistLifetimeTotals = { totalStreams: 0, totalStreamTime: 0, uniqueListeners: 0 };
+    if (songIds.length > 0) {
+      const end = new Date();
+      const [totalStreams, uniqueListeners, timeRow] = await Promise.all([
+        this.countPlays(songIds, null, end),
+        this.countUniqueListeners(songIds, null, end),
+        this.playRepo
+          .createQueryBuilder('play')
+          .innerJoin('play.song', 'song')
+          .select('COALESCE(SUM(song.duration), 0)', 'total')
+          .where('play.songId IN (:...songIds)', { songIds })
+          .andWhere('play.playedAt < :end', { end })
+          .getRawOne<{ total: string | number | null }>(),
+      ]);
+      totals = { totalStreams, totalStreamTime: Number(timeRow?.total ?? 0), uniqueListeners };
+    }
+
+    await CacheService.set(cacheKey, totals, STATS_CACHE_TTL_MS);
+    return totals;
   }
 
   /** Drop cached statistics for a song and its artist after a data change. */

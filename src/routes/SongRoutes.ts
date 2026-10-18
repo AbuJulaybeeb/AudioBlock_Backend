@@ -3,7 +3,7 @@ import { UploadController } from '../controllers/UploadController';
 import { validateDTO } from '../middlewares/validate';
 import { FinalizeUploadDTO } from '../dtos/FinalizeUploadDTO';
 import { UploadChunkDTO } from '../dtos/UploadChunkDTO';
-import { authArtistMiddleware } from '../middlewares/authMiddleware';
+import { authArtistMiddleware, requireAuth } from '../middlewares/authMiddleware';
 import multer from 'multer';
 import { CreateCoverDTO } from '../dtos/CreateCoverDTO';
 import fs from 'fs';
@@ -11,6 +11,9 @@ import { SongController } from '../controllers/SongController';
 import { EmbedController } from '../controllers/EmbedController';
 import { SubmitSignedXdrDTO } from '../dtos/SubmitSignedXdrDTO';
 import { idempotency } from '../middlewares/idempotency';
+import { AddCollaboratorDTO } from '../dtos/AddCollaboratorDTO';
+import { UpdateCollaboratorDTO } from '../dtos/UpdateCollaboratorDTO';
+import { ApplyRoyaltyTemplateDTO } from '../dtos/ApplyRoyaltyTemplateDTO';
 
 const uploadController = new UploadController();
 const router = Router();
@@ -48,7 +51,6 @@ const ALLOWED_AUDIO_MIMES = [
   'audio/aac', // .aac
   'audio/mp4', // .m4a
   'audio/x-m4a', // .m4a (alt)
-  'audio/webm', // .webm
 ];
 
 const ALLOWED_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/jpg'];
@@ -85,7 +87,7 @@ const chunkUpload = multer({
   fileFilter: (req, file, cb) => {
     if (!ALLOWED_AUDIO_MIMES.includes(file.mimetype)) {
       return cb(
-        new Error('Invalid file type. Allowed audio formats: MP3, WAV, FLAC, OGG, AAC, M4A, WebM'),
+        new Error('Invalid file type. Allowed audio formats: MP3, WAV, FLAC, OGG, AAC, M4A'),
       );
     }
     cb(null, true);
@@ -94,6 +96,17 @@ const chunkUpload = multer({
 
 const coverUpload = multer({
   storage: coverStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB for cover images
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_IMAGE_MIMES.includes(file.mimetype)) {
+      return cb(new Error('Invalid file type. Allowed image formats: JPG, PNG'));
+    }
+    cb(null, true);
+  },
+});
+// Replacement cover: kept in memory because CoverArtService reads file.buffer.
+const coverReplaceUpload = multer({
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB for cover images
   fileFilter: (req, file, cb) => {
     if (!ALLOWED_IMAGE_MIMES.includes(file.mimetype)) {
@@ -133,6 +146,12 @@ router.get('/popular', SongController.getPopularSongs);
 // Embeddable player endpoint — public, no auth, same rate limiting as streaming (Redis throttle)
 router.get('/embed/:id', EmbedController.getSongEmbed);
 
+// Listing and single-song reads. Both use optionalAuth so an artist can see
+// their own non-public songs. `/:id` is registered after every static GET path
+// above so it cannot capture them.
+router.get('/', optionalAuth, SongController.listSongs);
+router.get('/:id', optionalAuth, etagCache({ visibility: 'no-cache' }), SongController.getSong);
+
 // Soroban on-chain song minting: the artist's wallet signs, the backend
 // only builds and relays the transaction.
 router.post('/:id/onchain/prepare-mint', authArtistMiddleware, idempotency(), SongController.prepareMint);
@@ -142,6 +161,27 @@ router.post(
   idempotency(),
   validateDTO(SubmitSignedXdrDTO),
   SongController.submitMint,
+);
+
+// Collaborator management (owner-only writes; credits are public to read)
+router.get('/:id/collaborators', SongController.listCollaborators);
+router.post(
+  '/:id/collaborators',
+  authArtistMiddleware,
+  validateDTO(AddCollaboratorDTO),
+  SongController.addCollaborator,
+);
+router.patch(
+  '/:id/collaborators/:userId',
+  authArtistMiddleware,
+  validateDTO(UpdateCollaboratorDTO),
+  SongController.updateCollaborator,
+);
+router.post(
+  '/:id/royalty-template',
+  authArtistMiddleware,
+  validateDTO(ApplyRoyaltyTemplateDTO),
+  SongController.applyTemplate,
 );
 
 // Collaborator dispute endpoints

@@ -180,9 +180,6 @@ Stores user profile information, authentication credentials (wallet address, ema
 | `name`                         | `varchar`     | `Unique`, `Nullable`               | Display name.                                          |
 | `email`                        | `varchar`     | `Unique`, `Nullable`               | Email address (validated via `IsEmail`).               |
 | `rewardPoints`                 | `float`       | Default `0`                        | Platform loyalty / reward points.                      |
-| `totalStreams`                 | `int`         | Default `0`                        | Cumulative song play count across all artist tracks.   |
-| `totalStreamTime`              | `int`         | Default `0`                        | Cumulative listening duration in seconds.              |
-| `uniqueListeners`              | `int`         | Default `0`                        | Count of distinct listeners.                           |
 | `bio`                          | `text`        | `Nullable`                         | Artist biography / profile description.                |
 | `pageCover`                    | `varchar`     | `Nullable`                         | Header cover image URL.                                |
 | `website`                      | `varchar`     | `Nullable`                         | Personal website URL.                                  |
