@@ -1,5 +1,6 @@
 import { Repository } from 'typeorm';
 import { User } from '../../entities/User';
+import { AppError } from '../../errors/AppError';
 import AppDataSource from '../../config/db';
 import { SorobanContracts } from '../../config/soroban';
 import { SorobanService, addressArg, stringArg } from '../Soroban/SorobanService';
@@ -43,13 +44,19 @@ export class ArtistService {
    * @param userId - ID of the artist user.
    * @param cid - IPFS CID of the artist profile metadata.
    * @returns PreparedTransaction containing the XDR and network passphrase.
-   * @throws {Error} If user not found, no Stellar wallet, or CID missing.
+   * @throws {AppError} 400 if no Stellar wallet, 409 if already registered.
+   * @throws {Error} If user not found or CID missing.
    */
   async prepareArtistOnChainSetup(userId: string, cid: string): Promise<PreparedTransaction> {
     const user = await this.userRepo.findOneBy({ id: userId });
     if (!user) throw new Error('User not found');
     if (!user.stellarPublicKey) {
-      throw new Error('Connect a Stellar wallet before setting up an on-chain artist profile');
+      throw AppError.validation(
+        'Connect a Stellar wallet before setting up an on-chain artist profile',
+      );
+    }
+    if (user.stellarArtistId) {
+      throw AppError.conflict('Artist is already registered on-chain');
     }
     if (!cid) throw new Error('cid is required');
 
@@ -84,9 +91,15 @@ export class ArtistService {
     // setup_artist_profile returns (artist_id: u64, token_id: u64)
     const [artistId, tokenId] = returnValue as [bigint, bigint];
 
-    user.stellarArtistId = artistId.toString();
-    user.stellarArtistTokenId = tokenId.toString();
-    await this.userRepo.save(user);
+    // A retry of the same signed transaction yields the same ids; persist only once.
+    if (
+      user.stellarArtistId !== artistId.toString() ||
+      user.stellarArtistTokenId !== tokenId.toString()
+    ) {
+      user.stellarArtistId = artistId.toString();
+      user.stellarArtistTokenId = tokenId.toString();
+      await this.userRepo.save(user);
+    }
 
     return { txHash: hash, artistId: user.stellarArtistId, tokenId: user.stellarArtistTokenId };
   }
