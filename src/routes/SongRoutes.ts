@@ -11,9 +11,9 @@ import { SongController } from '../controllers/SongController';
 import { EmbedController } from '../controllers/EmbedController';
 import { SubmitSignedXdrDTO } from '../dtos/SubmitSignedXdrDTO';
 import { idempotency } from '../middlewares/idempotency';
-import { reportRateLimiter } from '../middlewares/rateLimiter';
-import { ReportSongDTO } from '../dtos/ReportSongDTO';
-import { UpdateSongDTO } from '../dtos/UpdateSongDTO';
+import { AddCollaboratorDTO } from '../dtos/AddCollaboratorDTO';
+import { UpdateCollaboratorDTO } from '../dtos/UpdateCollaboratorDTO';
+import { ApplyRoyaltyTemplateDTO } from '../dtos/ApplyRoyaltyTemplateDTO';
 
 const uploadController = new UploadController();
 const router = Router();
@@ -51,7 +51,6 @@ const ALLOWED_AUDIO_MIMES = [
   'audio/aac', // .aac
   'audio/mp4', // .m4a
   'audio/x-m4a', // .m4a (alt)
-  'audio/webm', // .webm
 ];
 
 const ALLOWED_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/jpg'];
@@ -88,7 +87,7 @@ const chunkUpload = multer({
   fileFilter: (req, file, cb) => {
     if (!ALLOWED_AUDIO_MIMES.includes(file.mimetype)) {
       return cb(
-        new Error('Invalid file type. Allowed audio formats: MP3, WAV, FLAC, OGG, AAC, M4A, WebM'),
+        new Error('Invalid file type. Allowed audio formats: MP3, WAV, FLAC, OGG, AAC, M4A'),
       );
     }
     cb(null, true);
@@ -158,33 +157,25 @@ router.post(
   SongController.submitMint,
 );
 
-// Edit or remove a song (owner or admin; enforced in SongService)
-router.patch('/:id', authArtistMiddleware, validateDTO(UpdateSongDTO), SongController.updateSong);
-router.delete('/:id', authArtistMiddleware, SongController.deleteSong);
-
-// Lyrics are public, but only served once the lyrics rights are confirmed
-router.get('/:id/lyrics', SongController.getLyrics);
-
-// Cover art: public read, owner-only replacement
-router.get('/:id/cover', SongController.getCoverArt);
-router.put(
-  '/:id/cover',
-  authArtistMiddleware,
-  coverReplaceUpload.single('cover'),
-  SongController.uploadCoverArt,
-);
-
-// Version history (owner or admin; enforced in SongController)
-router.get('/:id/versions', requireAuth, SongController.listVersions);
-router.get('/:id/versions/:version', requireAuth, SongController.getVersion);
-
-// Content reports: one per user per song (a repeat returns 409), 10 per hour per user
+// Collaborator management (owner-only writes; credits are public to read)
+router.get('/:id/collaborators', SongController.listCollaborators);
 router.post(
-  '/:id/report',
-  requireAuth,
-  reportRateLimiter,
-  validateDTO(ReportSongDTO),
-  SongController.reportSong,
+  '/:id/collaborators',
+  authArtistMiddleware,
+  validateDTO(AddCollaboratorDTO),
+  SongController.addCollaborator,
+);
+router.patch(
+  '/:id/collaborators/:userId',
+  authArtistMiddleware,
+  validateDTO(UpdateCollaboratorDTO),
+  SongController.updateCollaborator,
+);
+router.post(
+  '/:id/royalty-template',
+  authArtistMiddleware,
+  validateDTO(ApplyRoyaltyTemplateDTO),
+  SongController.applyTemplate,
 );
 
 // Collaborator dispute endpoints

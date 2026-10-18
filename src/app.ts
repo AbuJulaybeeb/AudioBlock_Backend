@@ -19,6 +19,7 @@ import adminRoutes from "./routes/adminRoutes";
 import webhookRoutes from "./routes/webhookRoutes";
 import takedownRoutes from "./routes/takedownRoutes";
 import embedRoutes from "./routes/embedRoutes";
+import oembedRoutes from "./routes/oembedRoutes";
 import royaltyPayoutRoutes from "./routes/royaltyPayoutRoutes";
 import playlistRoutes from "./routes/playlistRoutes";
 import userRoutes from "./routes/userRoutes";
@@ -126,6 +127,9 @@ app.use("/api/takedown", takedownRoutes);
 
 // Embeddable player (public, no auth)
 app.use("/api/embed", embedRoutes);
+
+// oEmbed provider endpoint for rich link previews (public, no auth)
+app.use("/api/oembed", oembedRoutes);
 
 
 // Playlists (Issue #77) + collaborative editing (#406) + smart playlists (#407)

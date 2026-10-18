@@ -203,6 +203,7 @@ _\* Required for the selected network. All five IDs must be set for the chosen `
 | `AUTH_RATE_LIMIT_MAX`        | No       | `20`              | Max requests per window for auth endpoints   |
 | `NONCE_RATE_LIMIT_WINDOW_MS` | No       | `900000` (15 min) | Time window for nonce endpoint rate limiting |
 | `NONCE_RATE_LIMIT_MAX`       | No       | `10`              | Max requests per window for nonce endpoint   |
+| `AUTH_RATE_LIMIT_MEMORY_FALLBACK` | No  | `false`           | When Redis is down, enforce per-instance in-memory limits on auth, nonce and password-reset endpoints instead of returning `503` (see [RATE_LIMITING.md](./RATE_LIMITING.md#redis-unavailable)) |
 
 ---
 
@@ -239,6 +240,7 @@ _\* Required for the selected network. All five IDs must be set for the chosen `
 | `JOB_COMPLETED_TTL_S`      | No       | `3600`  | How long (seconds) to retain completed jobs         |
 | `JOB_QUEUE_WARN_THRESHOLD` | No       | `100`   | Warn when queued jobs exceed this count             |
 | `JOB_MONITOR_INTERVAL_MS`  | No       | `30000` | Interval (ms) for queue depth metrics logging       |
+| `HLS_AUDIO_BITRATE`        | No       | `256k`  | Target AAC bitrate for HLS transcoding (e.g. `128k`, `256k`) |
 
 ---
 

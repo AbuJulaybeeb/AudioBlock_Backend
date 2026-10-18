@@ -20,7 +20,7 @@ Rate limiting uses Redis-backed sliding window counters, providing:
 
 - **Distributed enforcement** across multiple API instances
 - **Precise limits** without bucket quantization errors
-- **Graceful degradation** when Redis is unavailable (logs warning, allows request)
+- **Configurable Redis-outage behavior** per limiter (fail open or fail closed, see [Redis Unavailable](#redis-unavailable))
 
 ### Core Middleware
 
@@ -211,19 +211,29 @@ No rate limit error; request proceeds normally.
 
 ### Redis Unavailable
 
-**Behavior:** Request allowed, warning logged
+`createSlidingWindowLimiter` takes an optional `failureMode` (`'open'` by default) and `memoryFallback`:
 
-**Log Entry:**
-
-```json
-{
-  "level": "warn",
-  "msg": "Redis unavailable for rate limiting, allowing request",
-  "key": "auth:rl:192.168.1.100:user@example.com"
-}
+```typescript
+createSlidingWindowLimiter(windowMs, max, prefix, keyGenerator, {
+  failureMode: 'closed',
+  memoryFallback: false,
+});
 ```
 
-**Rationale:** Fail open to preserve availability during Redis outages. Upstream load balancer or WAF provides fallback rate limiting.
+| Limiters                                | `failureMode` | Behavior when Redis is down                               |
+| --------------------------------------- | ------------- | --------------------------------------------------------- |
+| General API, upload, admin, comment, AI | `open`        | Request allowed                                           |
+| Auth, nonce, password reset             | `closed`      | `503` with `Retry-After` (or in-memory limits, see below) |
+
+Failing open keeps the API available, but a Redis outage (or an attacker who can cause one) would disable brute-force protection on login, nonce and password-reset endpoints, so those fail closed.
+
+**In-memory fallback (opt-in):** with `memoryFallback: true` a `closed` limiter enforces the same window and max per API instance instead of returning `503`. Set `AUTH_RATE_LIMIT_MEMORY_FALLBACK=true` to enable it for the auth, nonce and password-reset limiters.
+
+Trade-off: the hard `503` guarantees no auth traffic is served unthrottled but blocks logins for the whole outage. The in-memory fallback keeps login working, but limits are per instance, so an attacker's effective budget is multiplied by the number of instances (and resets on restart).
+
+**Response (closed, no fallback):** `503` with `Retry-After` (window length, capped at 30 seconds).
+
+**Observability:** every fallback logs a `warn` ("Rate limiter Redis unavailable, using fallback") and increments `rate_limit_fallbacks_total{limiter, mode}` where `mode` is `open`, `closed` or `memory`.
 
 ## Sliding Window Algorithm
 
@@ -275,11 +285,11 @@ rate_limit_requests_total{limiter="auth", outcome="rejected"} 1234
     description: 'Possible credential stuffing attack or misconfigured client'
 
 - alert: RateLimitRedisUnavailable
-  expr: rate_limit_redis_errors_total > 0
+  expr: rate(rate_limit_fallbacks_total[1m]) > 0
   for: 1m
   annotations:
     summary: 'Rate limiter cannot reach Redis'
-    description: 'Falling back to allow-all behavior'
+    description: 'Open limiters allow all traffic; closed limiters reject or use per-instance memory limits'
 ```
 
 ## Testing Rate Limits

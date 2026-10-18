@@ -1,5 +1,13 @@
 import { createSlidingWindowLimiter } from './rateLimiter';
 
+// Brute-force protection must not disappear when Redis does: these limiters fail
+// closed (503 + Retry-After). Set AUTH_RATE_LIMIT_MEMORY_FALLBACK=true to enforce
+// per-instance in-memory limits instead, so login keeps working during an outage.
+const authLimiterOptions = {
+  failureMode: 'closed' as const,
+  memoryFallback: process.env.AUTH_RATE_LIMIT_MEMORY_FALLBACK === 'true',
+};
+
 const authWindowMs = parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || String(60 * 1000), 10);
 const authMax = parseInt(process.env.AUTH_RATE_LIMIT_MAX || '5', 10);
 
@@ -30,6 +38,7 @@ export const authRateLimiter = createSlidingWindowLimiter(
       'unknown';
     return `auth:rl:${req.ip}:${email}`;
   },
+  authLimiterOptions,
 );
 
 export const nonceRateLimiter = createSlidingWindowLimiter(
@@ -47,6 +56,7 @@ export const nonceRateLimiter = createSlidingWindowLimiter(
       'unknown';
     return `nonce:rl:${req.ip}:${email}`;
   },
+  authLimiterOptions,
 );
 
 export const passwordResetRateLimiter = createSlidingWindowLimiter(
@@ -64,6 +74,7 @@ export const passwordResetRateLimiter = createSlidingWindowLimiter(
       'unknown';
     return `pwreset:rl:${req.ip}:${email}`;
   },
+  authLimiterOptions,
 );
 
 // 2FA enable/verify/disable (issue #328): previously had no dedicated

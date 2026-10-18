@@ -7,12 +7,6 @@ jest.mock('../../config/db', () => ({
 jest.mock('../CacheService', () => ({
   CacheService: { clearSong: jest.fn().mockResolvedValue(undefined) },
 }));
-jest.mock('../SearchIndexService', () => ({
-  SearchIndexService: {
-    scheduleRemoval: jest.fn(),
-    scheduleIndexUpdate: jest.fn(),
-  },
-}));
 jest.mock('../TransactionLogService', () => ({
   TransactionLogService: jest.fn().mockImplementation(() => ({
     createLogEntry: jest.fn().mockResolvedValue(undefined),
@@ -24,7 +18,6 @@ jest.mock('../../config/logger', () => ({
 }));
 
 import AppDataSource from '../../config/db';
-import { SearchIndexService } from '../SearchIndexService';
 import { ReportService, REPORT_AUTO_FLAG_THRESHOLD } from '../ReportService';
 import { Song } from '../../entities/Song';
 import {
@@ -137,7 +130,6 @@ describe('ReportService.submitReport', () => {
     expect(result.songFlagged).toBe(true);
     expect(song.flagged).toBe(true);
     expect(song.flagReason).toContain(String(REPORT_AUTO_FLAG_THRESHOLD));
-    expect(SearchIndexService.scheduleRemoval).toHaveBeenCalledWith('song-1');
   });
 
   it('does not re-flag a song that is already flagged', async () => {
@@ -215,7 +207,6 @@ describe('ReportService.resolveReport', () => {
 
     expect(song.flagged).toBe(true);
     expect(song.flaggedBy).toBe('mod-1');
-    expect(SearchIndexService.scheduleRemoval).toHaveBeenCalledWith('song-1');
   });
 
   it('lifts an auto-flag when the queue empties after a dismissal', async () => {
@@ -232,7 +223,6 @@ describe('ReportService.resolveReport', () => {
     await new ReportService().resolveReport('r1', 'mod-1', { actionTaken: 'dismissed' });
 
     expect(song.flagged).toBe(false);
-    expect(SearchIndexService.scheduleIndexUpdate).toHaveBeenCalled();
   });
 
   it('keeps a moderator-set flag in place after a dismissal', async () => {

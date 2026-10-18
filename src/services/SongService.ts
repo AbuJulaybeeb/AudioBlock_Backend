@@ -14,7 +14,6 @@ import { SorobanContracts } from '../config/soroban';
 import { SorobanService, addressArg, stringArg, u64Arg } from './Soroban/SorobanService';
 import { PreparedTransaction } from './Artist/ArtistService';
 import { ScanService } from './ScanService';
-import { SearchIndexService } from './SearchIndexService';
 import { CacheService } from './CacheService';
 import { SongVersionService } from './Song/SongVersionService';
 import { AppError } from '../errors/AppError';
@@ -293,6 +292,10 @@ export class SongService {
 
     if (song.artistId !== userId) {
       throw Object.assign(new Error('Not authorized to modify this song'), { statusCode: 403 });
+    }
+
+    if (song.mintStatus === 'pending' || song.mintStatus === 'minted') {
+      throw AppError.conflict('Royalty splits cannot be changed after minting');
     }
 
     const templateRepo = AppDataSource.getRepository(RoyaltyTemplate);
@@ -622,8 +625,11 @@ export class SongService {
   /**
    * Search songs by title / artist / keywords (Issue #135, enhanced per #82).
    *
-   * Uses full-text search across song title, artist name (via JOIN), genre,
-   * and composers with relevance ranking. Results include artist metadata.
+   * Matches case-insensitively across song title, artist name and username
+   * (via JOIN), genre, composers and description. The `ILIKE '%term%'` lookups
+   * are served by pg_trgm GIN indexes (see the AddSongSearchTrigramIndexes
+   * migration). Results are ranked by match tier (exact / prefix / contains),
+   * then trigram similarity, then play count, and include artist metadata.
    * Minimum query length: 2 characters.
    *
    * @param query  - Search query string (min 2 chars).
@@ -658,14 +664,17 @@ export class SongService {
       .leftJoinAndSelect('song.user', 'artist')
       .where('song.status = :status', { status: 'ready' })
       .andWhere('song.flagged = false')
+      // One index-backed lookup per searched column. A single OR across the songs
+      // and users tables cannot use the trigram indexes, so each branch is
+      // resolved separately and the matches are unioned.
       .andWhere(
-        `(
-          song.title ILIKE :like OR
-          song.genre ILIKE :like OR
-          song.composers ILIKE :like OR
-          song.description ILIKE :like OR
-          artist.name ILIKE :like OR
-          artist.username ILIKE :like
+        `song.id IN (
+          SELECT id FROM songs WHERE title ILIKE :like
+          UNION SELECT id FROM songs WHERE genre ILIKE :like
+          UNION SELECT id FROM songs WHERE composers ILIKE :like
+          UNION SELECT id FROM songs WHERE description ILIKE :like
+          UNION SELECT s.id FROM songs s JOIN users u ON u.id = s."artistId"
+            WHERE u.name ILIKE :like OR u.username ILIKE :like
         )`,
         { like },
       )
@@ -685,12 +694,17 @@ export class SongService {
         END`,
         'relevance',
       )
+      .addSelect(
+        'GREATEST(similarity(song.title, :exact), similarity(artist.name, :exact))',
+        'similarity',
+      )
       .setParameters({
         like,
         exact: trimmed,
         prefix: `${trimmed}%`,
       })
       .orderBy('relevance', 'DESC')
+      .addOrderBy('similarity', 'DESC')
       .addOrderBy('song.playCount', 'DESC')
       .skip((safePage - 1) * safeLimit)
       .take(safeLimit);
@@ -805,19 +819,6 @@ export class SongService {
   }
 
   /**
-   * Rebuild the entire search index from the current ready, unflagged catalog.
-   *
-   * @returns Number of songs indexed.
-   */
-  async rebuildSearchIndex(): Promise<number> {
-    const songs = await this.songRepo.find({
-      where: { status: 'ready', flagged: false },
-      relations: ['user'],
-    });
-    return SearchIndexService.rebuild(songs);
-  }
-
-  /**
    * Flag a song as inappropriate, removing it from search results and creating
    * an audit log entry.
    *
@@ -843,9 +844,6 @@ export class SongService {
       action: 'song_flag',
       details: { songId, reason: reason || null },
     });
-
-    // Flagged songs must not surface in search results (Issue #135).
-    SearchIndexService.scheduleRemoval(songId);
 
     return song;
   }
@@ -875,15 +873,6 @@ export class SongService {
       action: 'song_unflag',
       details: { songId },
     });
-
-    // Restore the song to the search index once it's unflagged (Issue #135).
-    if (song.status === 'ready') {
-      const full = await this.songRepo.findOne({
-        where: { id: songId },
-        relations: ['user'],
-      });
-      if (full) SearchIndexService.scheduleIndexUpdate(full);
-    }
 
     return song;
   }

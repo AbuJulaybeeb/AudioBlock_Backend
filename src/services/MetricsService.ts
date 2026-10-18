@@ -147,6 +147,13 @@ export const authFailuresTotal = new client.Counter({
   registers: [register],
 });
 
+export const rateLimitFallbacksTotal = new client.Counter({
+  name: 'rate_limit_fallbacks_total',
+  help: 'Total requests handled by a rate limiter fallback because Redis was unavailable',
+  labelNames: ['limiter', 'mode'] as const, // mode: 'open'|'closed'|'memory'
+  registers: [register],
+});
+
 export const privyCircuitState = new client.Gauge({
   name: 'privy_circuit_state',
   help: 'Current state of the Privy circuit breaker (1 for the active state, 0 otherwise)',

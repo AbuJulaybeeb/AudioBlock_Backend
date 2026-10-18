@@ -33,6 +33,93 @@ paths:
       summary: Revoke an API key
       description: Revokes an active API key.
 
+  /api/song/{id}/collaborators:
+    get:
+      summary: List song collaborators
+      description: Public. Returns the active collaborators and their royalty shares for a song.
+      responses:
+        '200':
+          description: Active collaborators.
+    post:
+      summary: Add a song collaborator
+      description: Owner only. Total shares across collaborators cannot exceed 100. The added user is notified. Returns 409 once the song is minting or minted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, role, royaltyShare]
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                role:
+                  type: string
+                  enum: [primary, featured, producer, writer, mixer]
+                royaltyShare:
+                  type: number
+                  minimum: 0.01
+                  maximum: 100
+      responses:
+        '201':
+          description: Collaborator added.
+        '400':
+          description: Invalid role or share, or total shares would exceed 100.
+        '403':
+          description: Caller is not the song owner.
+        '409':
+          description: Already a collaborator, or the song is minting or minted.
+  /api/song/{id}/collaborators/{userId}:
+    patch:
+      summary: Update a song collaborator
+      description: Owner only. Returns 409 once the song is minting or minted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [primary, featured, producer, writer, mixer]
+                royaltyShare:
+                  type: number
+                  minimum: 0.01
+                  maximum: 100
+      responses:
+        '200':
+          description: Collaborator updated.
+        '400':
+          description: Invalid role or share, or total shares would exceed 100.
+        '403':
+          description: Caller is not the song owner.
+        '404':
+          description: Collaborator not found.
+        '409':
+          description: The song is minting or minted.
+  /api/song/{id}/royalty-template:
+    post:
+      summary: Apply a saved royalty template to a song
+      description: Owner only. Returns 409 once the song is minting or minted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [templateId]
+              properties:
+                templateId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Template applied.
+        '409':
+          description: The song is minting or minted.
+
   /api/activity/onchain:
     get:
       summary: List indexed on-chain activity

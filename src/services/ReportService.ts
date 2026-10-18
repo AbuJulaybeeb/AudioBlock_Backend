@@ -3,7 +3,6 @@ import AppDataSource from '../config/db';
 import { Song } from '../entities/Song';
 import { ContentReport, ReportAction, ReportReason, ReportStatus } from '../entities/ContentReport';
 import { AppError } from '../errors/AppError';
-import { SearchIndexService } from './SearchIndexService';
 import { TransactionLogService } from './TransactionLogService';
 import { CacheService } from './CacheService';
 import { getAiProvider } from './ai';
@@ -205,7 +204,6 @@ export class ReportService {
     song.flagReason = `Auto-flagged after ${pendingReports} pending content reports`;
     await this.songRepo.save(song);
 
-    SearchIndexService.scheduleRemoval(song.id);
     await CacheService.clearSong(song.id);
 
     logger.warn(
@@ -231,7 +229,6 @@ export class ReportService {
       song.flaggedBy = moderatorId;
       song.flagReason = `Content report resolution: ${action}`;
       await this.songRepo.save(song);
-      SearchIndexService.scheduleRemoval(songId);
       await CacheService.clearSong(songId);
       return;
     }
@@ -244,11 +241,6 @@ export class ReportService {
       song.flaggedAt = null;
       song.flagReason = null;
       await this.songRepo.save(song);
-
-      if (song.status === 'ready') {
-        const full = await this.songRepo.findOne({ where: { id: songId }, relations: ['user'] });
-        if (full) SearchIndexService.scheduleIndexUpdate(full);
-      }
       await CacheService.clearSong(songId);
     }
   }

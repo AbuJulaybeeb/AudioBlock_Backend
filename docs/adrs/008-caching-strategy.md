@@ -33,7 +33,7 @@ Standardize Redis usage into three categories, each with an explicit TTL policy 
 
 **Invalidation:** always explicit `DEL` on first successful use, in addition to the TTL — these are one-time-use by design, so a value must never be readable twice even within its TTL window. The TTL alone is a fallback for abandoned flows, not the primary invalidation mechanism.
 
-### 2. Derived-data cache (song manifests, artist profiles, genre list, search index)
+### 2. Derived-data cache (song manifests, artist profiles, genre list)
 
 | Key pattern                             | Purpose                                                                              | TTL                                              | Invalidation                                                                     |
 | --------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------ | -------------------------------------------------------------------------------- |
@@ -41,7 +41,6 @@ Standardize Redis usage into three categories, each with an explicit TTL policy 
 | `song:<songId>`                         | Song streaming metadata / presigned URLs (`CacheService`)                            | `CACHE_TTL_SONG_MS` env, default 300s (5 min)    | TTL, plus explicit `CacheService.clearSong()` on song update/delete              |
 | `artist:<artistId>`                     | Artist profile (`CacheService`)                                                      | `CACHE_TTL_ARTIST_MS` env, default 600s (10 min) | TTL, plus explicit `CacheService.clearArtist()` on profile update                |
 | `genres:all`                            | Full genre list (`CacheService`)                                                     | `CACHE_TTL_GENRE_MS` env, default 3600s (1 hr)   | TTL, plus explicit `CacheService.invalidateGenreList()` on genre CRUD            |
-| `song:idx:*` (see `SearchIndexService`) | Inverted search index for song lookup                                                | No TTL — durable index, not a cache              | Explicit add/remove on song create/update/delete                                 |
 
 **Why Redis:** all of these are read far more often than they change (a manifest is streamed on every playback; a genre list rarely changes), and all are derived from data already durably stored elsewhere (S3 for audio/manifests, Postgres for artist/song/genre records). Redis is disposable by construction here — every `get` path in `CacheService` and `SongController` falls back to regenerating the value on a miss, so Redis is never the source of truth and can be flushed without data loss.
 
@@ -51,7 +50,7 @@ Standardize Redis usage into three categories, each with an explicit TTL policy 
 - Artist profiles (10 min): change less often than play data, so a longer TTL reduces DB load without users noticing staleness.
 - Genre list (1 hr): effectively static reference data; a full hour is an acceptable staleness window in exchange for near-zero DB reads.
 
-**Invalidation:** TTL is the baseline for every entry (nothing here is cached forever), but write paths that can leave a _visibly_ stale cache (a re-uploaded song, an edited artist bio, a genre rename) also call the matching `CacheService.clear*`/`invalidate*` method so the change is visible immediately rather than waiting out the TTL. The search index has no TTL because it is a durable secondary index, not a cache — it is kept correct via explicit updates on every song mutation, not expiry.
+**Invalidation:** TTL is the baseline for every entry (nothing here is cached forever), but write paths that can leave a _visibly_ stale cache (a re-uploaded song, an edited artist bio, a genre rename) also call the matching `CacheService.clear*`/`invalidate*` method so the change is visible immediately rather than waiting out the TTL.
 
 ### 3. Rate-limit counters
 
@@ -84,7 +83,7 @@ Standardize Redis usage into three categories, each with an explicit TTL policy 
 
 ### Neutral
 
-- The Redis-backed job queue (`JobQueueService`) and search index (`SearchIndexService`) are Redis-resident but are not "caches" in the sense this ADR covers — they are documented here only to draw the boundary, with the job queue detailed in [ADR-004](004-background-job-processing.md)
+- The Redis-backed job queue (`JobQueueService`) is Redis-resident but is not a "cache" in the sense this ADR covers — it is documented here only to draw the boundary, and is detailed in [ADR-004](004-background-job-processing.md)
 
 ## Alternatives considered
 
