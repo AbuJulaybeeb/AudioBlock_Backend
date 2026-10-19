@@ -43,4 +43,30 @@ export class NotificationController {
       handleError(req, res, error);
     }
   };
+
+  /** POST /api/notifications/device-token — register a device token for push delivery (Issue #429). */
+  static registerDeviceToken = async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id as string;
+      const { token, platform } = req.body || {};
+
+      const deviceToken = await notificationService.registerDeviceToken(userId, token, platform);
+      return res.status(200).json({ success: true, data: deviceToken });
+    } catch (error) {
+      handleError(req, res, error);
+    }
+  };
+
+  /** DELETE /api/notifications/device-token — remove a device token (Issue #429). */
+  static removeDeviceToken = async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id as string;
+      const token = (req.body?.token || req.query?.token) as string;
+
+      const removed = await notificationService.removeDeviceToken(userId, token);
+      return res.status(200).json({ success: true, removed });
+    } catch (error) {
+      handleError(req, res, error);
+    }
+  };
 }

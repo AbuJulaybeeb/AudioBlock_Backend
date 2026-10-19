@@ -59,6 +59,14 @@ Visualisations of the application metrics emitted by `MetricsService`:
 - `cache_hits_total` / `cache_misses_total`
 - `marketplace_volume_stroops_total`
 - `royalties_paid_total`
+- `rabbitmq_queue_depth` (queue depth by queue name, e.g. `song_processing`, Issue #377)
+
+### Queue Depth Alerting (Issue #377)
+
+Alert rules configured in `monitoring/prometheus-alerts.yml` under group `audioblock-rabbitmq`:
+
+- `SongProcessingQueueBacklog`: Fires when `rabbitmq_queue_depth{queue="song_processing"} > 10` for 5 minutes (warning). Indicates worker crash, stalled consumer, or FFmpeg unavailability.
+- `CriticalSongProcessingQueueBacklog`: Fires when `rabbitmq_queue_depth{queue="song_processing"} > 50` for 10 minutes (critical). Requires immediate worker scaling or restart.
 
 ### `audioblock-node.json`
 

@@ -13,6 +13,7 @@ import * as os from 'os';
 import axios from 'axios';
 import { transcodeToHLS } from '../utils/ffmpeg';
 import { S3 } from 'aws-sdk';
+import { updateRabbitMQQueueDepth } from '../services/MetricsService';
 
 function getSongRepo() {
   return AppDataSource.getRepository(Song);
@@ -256,6 +257,7 @@ export async function getWorkerHealthStatus(
     const queueInfo = await channel.checkQueue(MAIN_QUEUE);
     pendingJobsCount = queueInfo.messageCount;
     activeConsumersCount = queueInfo.consumerCount;
+    updateRabbitMQQueueDepth(MAIN_QUEUE, pendingJobsCount);
   } catch (err: any) {
     return {
       status: 'error',

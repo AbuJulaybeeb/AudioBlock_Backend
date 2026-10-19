@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { DataSource, getMetadataArgsStorage } from 'typeorm';
+import { DataSource } from 'typeorm';
 import dotenv from 'dotenv';
 import { User } from '../entities/User';
 import { Song } from '../entities/Song';
@@ -18,6 +18,8 @@ import { IndexedEvent } from '../entities/IndexedEvent';
 import { AccountDeletionRequest } from '../entities/AccountDeletionRequest';
 import { ProjectionCheckpoint } from '../entities/ProjectionCheckpoint';
 import { OnChainEventCount } from '../entities/OnChainEventCount';
+import { Notification } from '../entities/Notification';
+import { DeviceToken } from '../entities/DeviceToken';
 
 dotenv.config();
 
@@ -50,6 +52,8 @@ const AppDataSource = new DataSource({
     AccountDeletionRequest,
     ProjectionCheckpoint,
     OnChainEventCount,
+    Notification,
+    DeviceToken,
   ],
   migrations: [__dirname + '/../migrations/*.{js,ts}'],
   migrationsTableName: 'migrations',

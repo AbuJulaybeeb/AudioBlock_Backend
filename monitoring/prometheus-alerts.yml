@@ -120,3 +120,38 @@ groups:
             This could indicate users attempting to reuse revoked tokens or a session management issue.
           dashboard: "http://localhost:3001/d/audioblock-app"
 
+  # RabbitMQ queue backlog monitoring (Issue #377)
+  - name: audioblock-rabbitmq
+    rules:
+      # Fires when song_processing queue backs up for 5+ minutes (worker crash, ffmpeg unavailable, etc.)
+      - alert: SongProcessingQueueBacklog
+        expr: |
+          rabbitmq_queue_depth{queue="song_processing"} > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "RabbitMQ song_processing queue backlog detected"
+          description: >
+            The song_processing queue has had {{ $value }} pending messages for over 5 minutes.
+            Song workers may have stalled, crashed, or encountered processing failures.
+          runbook: "https://github.com/AudioBitsStellar/AudioBlock_Backend/blob/main/docs/worker-scaling.md"
+          dashboard: "http://localhost:3001/d/audioblock-app"
+
+      # Escalates to critical when backlog is sustained at high levels
+      - alert: CriticalSongProcessingQueueBacklog
+        expr: |
+          rabbitmq_queue_depth{queue="song_processing"} > 50
+        for: 10m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Critical backlog on RabbitMQ song_processing queue"
+          description: >
+            The song_processing queue has exceeded 50 pending messages for over 10 minutes (current: {{ $value }}).
+            Immediate worker restart or scaling intervention required.
+          runbook: "https://github.com/AudioBitsStellar/AudioBlock_Backend/blob/main/docs/worker-scaling.md"
+          dashboard: "http://localhost:3001/d/audioblock-app"
+

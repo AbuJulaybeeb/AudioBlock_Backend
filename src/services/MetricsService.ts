@@ -192,6 +192,43 @@ export const sorobanRpcLatencySeconds = new client.Histogram({
   registers: [register],
 });
 
+// ── RabbitMQ queue metrics (Issue #377) ──────────────────────────────────────
+
+export const rabbitmqQueueDepth = new client.Gauge({
+  name: 'rabbitmq_queue_depth',
+  help: 'Current number of messages in the RabbitMQ queue (queue depth)',
+  labelNames: ['queue'] as const,
+  registers: [register],
+});
+
+/**
+ * Update the Prometheus gauge reflecting the current RabbitMQ queue depth.
+ *
+ * @param queue - The queue name (e.g. 'song_processing')
+ * @param depth - The number of pending/waiting messages in the queue
+ */
+export function updateRabbitMQQueueDepth(queue: string, depth: number): void {
+  rabbitmqQueueDepth.set({ queue }, Math.max(0, depth));
+}
+
+/**
+ * Poll and record the depth for a given RabbitMQ queue using an active channel.
+ *
+ * @param channel - RabbitMQ channel with checkQueue capability
+ * @param queueName - The queue name (defaults to 'song_processing')
+ * @returns The current message count (queue depth)
+ */
+export async function collectQueueDepth(
+  channel: {
+    checkQueue: (name: string) => Promise<{ messageCount: number; consumerCount: number }>;
+  },
+  queueName: string = 'song_processing',
+): Promise<number> {
+  const info = await channel.checkQueue(queueName);
+  rabbitmqQueueDepth.set({ queue: queueName }, info.messageCount);
+  return info.messageCount;
+}
+
 /**
  * Update the Prometheus gauges reflecting the current PostgreSQL connection
  * pool state.

@@ -89,6 +89,19 @@ when sustained job age exceeds the service target and downstream capacity allows
 it; stop adding when throughput flattens or failures/latency grow. Scale down only
 after uploads are paused and in-flight work has finished.
 
+## Queue depth monitoring and alerting (Issue #377)
+
+Queue depth for `song_processing` is exposed as a Prometheus gauge `rabbitmq_queue_depth{queue="song_processing"}` through `MetricsService` and scraped via `GET /metrics`.
+
+Backlog alerts configured in `monitoring/prometheus-alerts.yml`:
+- **`SongProcessingQueueBacklog`** (`rabbitmq_queue_depth{queue="song_processing"} > 10` for 5m, `warning`): Sustained backlog signals stalled consumers, crashed worker processes, or FFmpeg unavailability.
+- **`CriticalSongProcessingQueueBacklog`** (`rabbitmq_queue_depth{queue="song_processing"} > 50` for 10m, `critical`): Critical backlog escalation requiring urgent operator intervention (worker restart or horizontal scaling).
+
+When an alert fires:
+1. Verify worker container status and logs for unhandled errors or FFmpeg crash loops.
+2. Check broker consumer counts: ensure active consumers > 0 on `song_processing`.
+3. If consumers are healthy but arrival rate exceeds single-worker processing capacity, scale out worker replicas following the capacity guidelines above.
+
 ## Safety limits before production scaling
 
 - Messages are acknowledged after processing, including an on-chain mint. A

@@ -3,12 +3,16 @@ import 'reflect-metadata';
 const mockListForUser = jest.fn();
 const mockMarkAsRead = jest.fn();
 const mockMarkAllAsRead = jest.fn();
+const mockRegisterDeviceToken = jest.fn();
+const mockRemoveDeviceToken = jest.fn();
 
 jest.mock('../services/NotificationService', () => ({
   NotificationService: jest.fn().mockImplementation(() => ({
     listForUser: mockListForUser,
     markAsRead: mockMarkAsRead,
     markAllAsRead: mockMarkAllAsRead,
+    registerDeviceToken: mockRegisterDeviceToken,
+    removeDeviceToken: mockRemoveDeviceToken,
   })),
 }));
 
@@ -92,5 +96,41 @@ describe('NotificationController.markAllAsRead', () => {
 
     expect(mockMarkAllAsRead).toHaveBeenCalledWith('user-1');
     expect(json).toHaveBeenCalledWith({ success: true, updated: 3 });
+  });
+});
+
+describe('NotificationController.registerDeviceToken', () => {
+  it('registers a device token for the authenticated user', async () => {
+    mockRegisterDeviceToken.mockResolvedValue({
+      id: 'dt-1',
+      userId: 'user-1',
+      token: 'fcm-token-xyz',
+      platform: 'ios',
+    });
+
+    const req = mockReq({ body: { token: 'fcm-token-xyz', platform: 'ios' } });
+    const { res, json } = mockRes();
+
+    await NotificationController.registerDeviceToken(req, res);
+
+    expect(mockRegisterDeviceToken).toHaveBeenCalledWith('user-1', 'fcm-token-xyz', 'ios');
+    expect(json).toHaveBeenCalledWith({
+      success: true,
+      data: expect.objectContaining({ token: 'fcm-token-xyz', platform: 'ios' }),
+    });
+  });
+});
+
+describe('NotificationController.removeDeviceToken', () => {
+  it('removes a device token for the authenticated user', async () => {
+    mockRemoveDeviceToken.mockResolvedValue(true);
+
+    const req = mockReq({ body: { token: 'fcm-token-xyz' } });
+    const { res, json } = mockRes();
+
+    await NotificationController.removeDeviceToken(req, res);
+
+    expect(mockRemoveDeviceToken).toHaveBeenCalledWith('user-1', 'fcm-token-xyz');
+    expect(json).toHaveBeenCalledWith({ success: true, removed: true });
   });
 });
