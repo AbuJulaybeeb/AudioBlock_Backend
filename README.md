@@ -497,6 +497,12 @@ deployment secret stores or environment dashboards together with the contract
 repo deployment tag/commit in the release notes so backend and contract
 versions can be traced together.
 
+## Operations runbooks
+
+- [Disaster recovery: DB, S3, Redis, RabbitMQ and region loss](docs/runbooks/disaster-recovery.md)
+- [Staging and production parity audit and checklist](docs/staging-production-parity.md)
+- [Worker horizontal scaling, prefetch and multi-instance verification](docs/worker-scaling.md)
+
 ## S3 Storage and Lifecycle Management
 
 Audio uploads are stored in AWS S3, with a structured prefix strategy to

@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --trace-warnings --transpile-only src/index.ts",
     "dev:bootstrap": "ts-node --transpile-only scripts/dev-bootstrap.ts",
-    "worker": "ts-node src/workers/SongProcessorWorker.ts",
+    "worker": "ts-node src/workers/songWorkerMain.ts",
     "worker:indexer": "ts-node src/workers/indexer/index.ts",
     "indexer": "ts-node src/workers/indexer/index.ts",
     "cli": "ts-node src/scripts/backfill.ts",

@@ -229,6 +229,12 @@ _\* Required for the selected network. All five IDs must be set for the chosen `
 
 ## Worker / Job Queue
 
+Song consumers use `WORKER_PREFETCH` (positive integer, default `1`) to bound
+unacknowledged deliveries and in-flight async processing. See the
+[worker scaling guide](worker-scaling.md) before raising it. The song consumer's
+attempt limit is currently hardcoded; the `WORKER_*` retry examples below are
+not read by that consumer.
+
 | Variable                   | Required | Default | Description                                         |
 | -------------------------- | -------- | ------- | --------------------------------------------------- |
 | `WORKER_MAX_ATTEMPTS`      | No       | `3`     | Max processing attempts before DLQ (song processor) |

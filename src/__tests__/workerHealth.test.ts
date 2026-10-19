@@ -5,6 +5,7 @@ import {
   getWorkerHealthStatus,
   setWorkerHealthStateForTests,
   resetWorkerHealthForTests,
+  startSongWorker,
 } from '../workers/SongProcessorWorker';
 import * as rabbitmq from '../config/rabbitmq';
 
@@ -32,6 +33,33 @@ describe('Worker Health Check (Issue #356)', () => {
 
   afterAll(() => {
     process.env = originalEnv;
+  });
+
+  describe('song consumer prefetch', () => {
+    it.each([undefined, '2'])('sets bounded prefetch before consuming (%s)', async (value) => {
+      if (value === undefined) delete process.env.WORKER_PREFETCH;
+      else process.env.WORKER_PREFETCH = value;
+      const channel = {
+        prefetch: jest.fn().mockResolvedValue(undefined),
+        assertQueue: jest.fn().mockResolvedValue(undefined),
+        consume: jest.fn().mockResolvedValue({ consumerTag: 'test-consumer' }),
+      };
+      jest.spyOn(rabbitmq, 'getChannel').mockReturnValue(channel as any);
+      expect(await startSongWorker()).toBe(true);
+      expect(channel.prefetch).toHaveBeenCalledWith(value === undefined ? 1 : 2);
+      expect(channel.prefetch.mock.invocationCallOrder[0]).toBeLessThan(
+        channel.consume.mock.invocationCallOrder[0],
+      );
+    });
+
+    it.each(['0', '-1', '1.5', 'NaN', 'Infinity'])('refuses unsafe prefetch %s', async (value) => {
+      process.env.WORKER_PREFETCH = value;
+      const channel = { prefetch: jest.fn(), consume: jest.fn() };
+      jest.spyOn(rabbitmq, 'getChannel').mockReturnValue(channel as any);
+      expect(await startSongWorker()).toBe(false);
+      expect(channel.consume).not.toHaveBeenCalled();
+      expect(channel.prefetch).not.toHaveBeenCalled();
+    });
   });
 
   describe('getWorkerHealthStatus unit logic', () => {
