@@ -534,3 +534,10 @@ auth_active_sessions_count 4567
 - [Rate Limiting](./RATE_LIMITING.md)
 - Issue #608: Implement logout/session invalidation endpoint
 - Issue #630: Session refresh token rotation
+
+
+### Privy revocation storage
+
+Privy revocations are shared through Redis across API instances and restarts. Per-session keys `privy:revoked:<sid>` expire after the token's remaining lifetime. Per-user keys `privy:revoked-user:<userId>` store an epoch-seconds cutoff: tokens issued before it are rejected, including previously unseen sessions. User cutoffs are retained indefinitely because no maximum token lifetime is assumed. Configure Redis persistence and retention so these security records survive Redis restarts; do not use an eviction policy that discards revocations.
+
+`PRIVY_REVOCATION_FAILURE_MODE=closed` is the default: Redis errors or a lookup exceeding two seconds reject authentication. Set it to `open` explicitly to accept otherwise-valid tokens during an outage, at the cost of temporarily accepting revoked tokens. Revocation writes always propagate failures so a failed write cannot be reported as successful. Redis TTL replaces the old process cleanup timer. The legacy JWT refresh flow is unchanged.

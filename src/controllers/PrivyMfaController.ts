@@ -56,7 +56,7 @@ export class PrivyMfaController {
       await this.service.revokeAllSessions(claims.sub);
 
       // Track revocation locally for early rejection (Issue #625)
-      privySessionService.revokeUserSessions(claims.sub);
+      await privySessionService.revokeUserSessions(claims.sub);
 
       logger.info({ privyUserId: claims.sub }, 'Revoked all Privy sessions');
 

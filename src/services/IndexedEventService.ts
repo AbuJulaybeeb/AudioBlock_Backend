@@ -47,7 +47,10 @@ export class IndexedEventService {
    * If the event already exists (by network, contractId, ledger, eventId) or by unique constraints,
    * this operation is a no-op and returns the existing event without throwing an error.
    */
-  async upsertEvent(dto: InsertIndexedEventDTO): Promise<IndexedEvent> {
+  async upsertEvent(
+    dto: InsertIndexedEventDTO,
+    onResult?: (inserted: boolean) => void,
+  ): Promise<IndexedEvent> {
     const network = dto.network || 'stellar-testnet';
     const payload = dto.payload || dto.data || {};
     const eventId = dto.eventId || `${dto.txHash || 'event'}-${dto.ledger || 0}`;
@@ -55,6 +58,7 @@ export class IndexedEventService {
 
     const existing = await this.repo.findOne({ where });
     if (existing) {
+      onResult?.(false);
       logger.debug(
         { network, contractId: dto.contractId, ledger: dto.ledger, eventId },
         'Duplicate indexed event detected; returning existing record (no-op)',
@@ -76,11 +80,16 @@ export class IndexedEventService {
         data: payload,
       });
 
-      return await this.repo.save(event);
+      const saved = await this.repo.save(event);
+      onResult?.(true);
+      return saved;
     } catch (err) {
       if (this.isDuplicateError(err)) {
         const raceExisting = await this.repo.findOne({ where });
-        if (raceExisting) return raceExisting;
+        if (raceExisting) {
+          onResult?.(false);
+          return raceExisting;
+        }
       }
       throw err;
     }

@@ -1,27 +1,15 @@
 #!/usr/bin/env ts-node
-/**
- * Reindex CLI tool (Issue #256)
- *
- * Allows replaying/reindexing a specific ledger range for debugging
- * missed or malformed events.
- *
- * Safety guarantees:
- * - Does NOT mutate the live indexer cursor
- * - Writes/updates IndexedEvent rows idempotently
- * - Can be run in dry-run mode (read-only)
- *
- * Usage:
- *   npm run cli:reindex -- \
- *     --contract <CONTRACT_ID> \
- *     --network <mainnet|testnet> \
- *     --from <START_LEDGER> \
- *     --to <END_LEDGER> \
- *     [--dry-run]
- */
-
 import { IndexedEventService, InsertIndexedEventDTO } from '../services/IndexedEventService';
 import AppDataSource from '../config/db';
 import logger from '../config/logger';
+import {
+  SorobanEventReader,
+  NormalizedContractEvent,
+} from '../services/Soroban/SorobanEventReader';
+import {
+  buildIndexerContracts,
+  IndexerContract,
+} from '../services/Soroban/IndexerContractRegistry';
 
 interface ReindexOptions {
   contract: string;
@@ -31,239 +19,154 @@ interface ReindexOptions {
   dryRun?: boolean;
 }
 
-interface SorobanEvent {
-  id: string;
-  ledger: number;
-  contractId: string;
-  type: string;
-  value: Record<string, unknown>;
-  txHash?: string;
+export interface ReindexSummary {
+  fetched: number;
+  inserted: number;
+  alreadyPresent: number;
+  failed: number;
+  skipped: number;
+  perType: Record<string, number>;
 }
 
-/**
- * Parse command line arguments
- */
-function parseArgs(): ReindexOptions | null {
-  const args = process.argv.slice(2);
-  const options: Partial<ReindexOptions> = {};
+function createReindexContext(options: ReindexOptions) {
+  const { contract, network, from, to } = options;
+  if (!Number.isSafeInteger(from) || from < 0)
+    throw new Error('Start ledger (--from) must be >= 0 and an integer');
+  if (!Number.isSafeInteger(to) || to < from || to === Number.MAX_SAFE_INTEGER)
+    throw new Error('End ledger (--to) must be >= start ledger (--from) and an integer');
+  if (network !== 'testnet' && network !== 'mainnet')
+    throw new Error('Network must be testnet or mainnet');
+  // Config getters resolve the requested network. Restore the environment before any await.
+  const previous = process.env.SOROBAN_NETWORK;
+  let reader: SorobanEventReader;
+  let registered;
+  try {
+    process.env.SOROBAN_NETWORK = network;
+    registered = buildIndexerContracts().find((entry) => entry.contractId === contract);
+    if (!registered) throw new Error('Contract is not in IndexerContractRegistry');
+    reader = new SorobanEventReader();
+    return { reader, registered };
+  } finally {
+    if (previous === undefined) delete process.env.SOROBAN_NETWORK;
+    else process.env.SOROBAN_NETWORK = previous;
+  }
+}
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
-    if (arg === '--contract' && i + 1 < args.length) {
-      options.contract = args[++i];
-    } else if (arg === '--network' && i + 1 < args.length) {
-      options.network = args[++i];
-    } else if (arg === '--from' && i + 1 < args.length) {
-      options.from = parseInt(args[++i], 10);
-    } else if (arg === '--to' && i + 1 < args.length) {
-      options.to = parseInt(args[++i], 10);
-    } else if (arg === '--dry-run') {
-      options.dryRun = true;
-    } else if (arg === '--help' || arg === '-h') {
-      return null;
+async function processReindexEvent(
+  event: NormalizedContractEvent,
+  options: ReindexOptions,
+  registered: IndexerContract,
+  service: IndexedEventService,
+  summary: ReindexSummary,
+): Promise<void> {
+  const { network, dryRun } = options;
+  summary.fetched++;
+  try {
+    const dto: InsertIndexedEventDTO | null = registered.decoder.decode(event);
+    if (!dto) {
+      summary.skipped++;
+      return;
     }
-  }
-
-  if (!options.contract || !options.network || options.from === undefined || options.to === undefined) {
-    return null;
-  }
-
-  return options as ReindexOptions;
-}
-
-/**
- * Print CLI usage instructions
- */
-function printUsage(): void {
-  console.log(`
-Usage: npm run cli:reindex -- [options]
-
-Required:
-  --contract <ID>            Target Soroban contract address
-  --network <NETWORK>        Network (mainnet or testnet)
-  --from <LEDGER>            Start ledger number
-  --to <LEDGER>              End ledger number
-
-Optional:
-  --dry-run                   Read-only mode, no database writes
-
-Examples:
-  npm run cli:reindex -- --contract CXXX... --network mainnet --from 1000000 --to 1001000
-  npm run cli:reindex -- --contract CXXX... --network testnet --from 500000 --to 501000 --dry-run
-  `);
-}
-
-/**
- * Mock Soroban RPC client for fetching events
- * TODO: Replace with actual SorobanService integration
- */
-class SorobanRpcClient {
-  private rpcUrl: string;
-
-  constructor(network: string) {
-    this.rpcUrl =
-      network === 'mainnet'
-        ? process.env.SOROBAN_RPC_URL_MAINNET || 'https://soroban-mainnet.stellar.org'
-        : process.env.SOROBAN_RPC_URL_TESTNET || 'https://soroban-testnet.stellar.org';
-  }
-
-  async getEvents(
-    contractId: string,
-    startLedger: number,
-    endLedger: number,
-  ): Promise<SorobanEvent[]> {
-    // TODO: Implement actual RPC call
-    logger.debug(
-      { contractId, startLedger, endLedger, rpcUrl: this.rpcUrl },
-      'Fetching events for reindex',
-    );
-    return [];
+    summary.perType[dto.eventType] = (summary.perType[dto.eventType] || 0) + 1;
+    if (!dryRun)
+      await service.upsertEvent({ ...dto, network }, (inserted) => {
+        if (inserted) summary.inserted++;
+        else summary.alreadyPresent++;
+      });
+  } catch (err) {
+    summary.failed++;
+    logger.error({ err, eventId: event.id }, 'Failed to reindex event');
   }
 }
 
-/**
- * Reindex a specific ledger range
- */
-async function reindexRange(options: ReindexOptions): Promise<void> {
+async function reindexRange(options: ReindexOptions): Promise<ReindexSummary> {
   const { contract, network, from, to, dryRun } = options;
-
-  logger.info({ contract, network, from, to, dryRun }, 'Starting reindex operation');
-
-  // Validate parameters
-  if (from < 0) {
-    throw new Error('Start ledger (--from) must be >= 0');
-  }
-
-  if (to < from) {
-    throw new Error('End ledger (--to) must be >= start ledger (--from)');
-  }
-
-  const ledgerRange = to - from;
-  if (ledgerRange > 10000) {
-    logger.warn(
-      { ledgerRange },
-      'Large ledger range detected. Consider breaking into smaller batches.',
-    );
-  }
-
-  // Initialize database connection
-  if (!AppDataSource.isInitialized) {
-    await AppDataSource.initialize();
-  }
-
-  const eventService = new IndexedEventService();
-  const client = new SorobanRpcClient(network);
-
-  let totalEvents = 0;
-  let processedEvents = 0;
-  const batchSize = 100;
-
+  const { reader, registered } = createReindexContext(options);
+  const summary: ReindexSummary = {
+    fetched: 0,
+    inserted: 0,
+    alreadyPresent: 0,
+    failed: 0,
+    skipped: 0,
+    perType: {},
+  };
+  const ownsConnection = !dryRun && !AppDataSource.isInitialized;
+  if (ownsConnection) await AppDataSource.initialize();
+  const service = new IndexedEventService();
+  let cursor: string | undefined;
+  const cursors = new Set<string>();
   try {
-    // Process in batches
-    for (let currentLedger = from; currentLedger < to; currentLedger += batchSize) {
-      const endLedger = Math.min(currentLedger + batchSize, to);
-
-      logger.info(
-        { currentLedger, endLedger, progress: `${currentLedger - from}/${ledgerRange}` },
-        'Fetching batch',
-      );
-
-      const events = await client.getEvents(contract, currentLedger, endLedger);
-      totalEvents += events.length;
-
-      if (events.length === 0) {
-        logger.debug({ currentLedger, endLedger }, 'No events in batch');
-        continue;
-      }
-
-      logger.info({ eventCount: events.length }, 'Processing batch events');
-
-      for (const event of events) {
-        if (dryRun) {
-          logger.info({ event }, '[DRY RUN] Would insert/update event');
-        } else {
-          const dto: InsertIndexedEventDTO = {
-            eventId: event.id,
-            network,
-            contractId: event.contractId,
-            ledger: event.ledger,
-            eventType: event.type,
-            eventData: event.value,
-            txHash: event.txHash,
-          };
-
-          await eventService.upsertEvent(dto);
-          processedEvents++;
+    while (true) {
+      const page = await reader.fetchEvents({
+        contractIds: [contract],
+        ...(cursor ? { cursor } : { startLedger: from, endLedger: to + 1 }),
+        limit: 200,
+      });
+      let pastEnd = false;
+      for (const event of page.events) {
+        if (event.ledger > to) {
+          pastEnd = true;
+          continue;
         }
+        if (event.ledger < from) continue;
+        await processReindexEvent(event, options, registered, service, summary);
       }
-
-      // Progress update
-      if ((currentLedger - from) % 1000 === 0) {
-        logger.info(
-          {
-            processed: currentLedger - from,
-            total: ledgerRange,
-            eventsFound: totalEvents,
-          },
-          'Reindex progress',
-        );
+      if (pastEnd || !page.cursor) break;
+      if (cursors.has(page.cursor)) {
+        if (page.events.length === 0) break; // RPC reached its current tip.
+        throw new Error('RPC pagination cursor did not advance');
       }
+      cursors.add(page.cursor);
+      cursor = page.cursor;
     }
-
-    // Summary
-    logger.info(
-      {
-        contract,
-        network,
-        fromLedger: from,
-        toLedger: to,
-        totalEvents,
-        processedEvents: dryRun ? 0 : processedEvents,
-        dryRun,
-      },
-      'Reindex complete',
-    );
-
-    if (dryRun) {
-      logger.info('Dry run mode: No database changes were made');
-    } else {
-      logger.info(
-        `Successfully reindexed ${processedEvents} events. Live cursor was NOT modified.`,
-      );
-    }
-  } catch (error) {
-    logger.error({ err: error }, 'Reindex operation failed');
-    throw error;
+    return summary;
+  } finally {
+    logger.info({ contract, network, from, to, dryRun: !!dryRun, ...summary }, 'Reindex summary');
+    if (ownsConnection) await AppDataSource.destroy();
   }
-}
-
-/**
- * Main CLI entry point
- */
-async function main() {
-  const options = parseArgs();
-
-  if (!options) {
-    printUsage();
-    process.exit(1);
-  }
-
-  try {
-    await reindexRange(options);
-    process.exit(0);
-  } catch (error) {
-    logger.error({ err: error }, 'Reindex failed');
-    process.exit(1);
-  }
-}
-
-// Run CLI if executed directly
-if (require.main === module) {
-  main().catch((error) => {
-    console.error('Fatal error:', error);
-    process.exit(1);
-  });
 }
 
 export { reindexRange };
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(
+      'Usage: npm run cli:reindex -- --contract ID --network testnet|mainnet --from LEDGER --to LEDGER [--dry-run]',
+    );
+    return;
+  }
+  const values: Record<string, string> = {};
+  let dryRun = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--dry-run') {
+      dryRun = true;
+      continue;
+    }
+    if (
+      !['--contract', '--network', '--from', '--to'].includes(arg) ||
+      !args[i + 1] ||
+      args[i + 1].startsWith('--')
+    )
+      throw new Error('Unknown or incomplete argument: ' + arg);
+    values[arg] = args[++i];
+  }
+  if (['--contract', '--network', '--from', '--to'].some((key) => !values[key]))
+    throw new Error('Required: --contract --network --from --to');
+  const summary = await reindexRange({
+    contract: values['--contract'],
+    network: values['--network'],
+    from: Number(values['--from']),
+    to: Number(values['--to']),
+    dryRun,
+  });
+  process.exitCode = summary.failed ? 1 : 0;
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    logger.error({ err }, 'Reindex failed');
+    process.exitCode = 1;
+  });
+}

@@ -166,7 +166,9 @@ export async function verifyPrivyAccessToken(
   }
 
   // Check if the session has been explicitly revoked (Issue #625)
-  if (privySessionService.isSessionRevoked(result.sessionId)) {
+  if (
+    await privySessionService.isSessionRevoked(result.sessionId, result.userId, result.issuedAt)
+  ) {
     privyTokenVerificationsTotal.inc({ outcome: 'revoked' });
     throw new PrivySessionRevokedError(result.sessionId);
   }

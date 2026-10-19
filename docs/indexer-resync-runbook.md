@@ -295,3 +295,10 @@ If the indexer cannot recover after following this runbook:
 - [Indexer Backfill Runbook](./indexer-backfill-runbook.md) — historical data import
 - [ADR-010: Indexer Architecture](./adrs/010-indexer-architecture.md)
 - [Deployment & Scaling Guide](./deployment-and-scaling.md)
+
+
+### Reindex a bounded range
+
+Run `npm run cli:reindex -- --contract <REGISTERED_CONTRACT_ID> --network testnet --from 100 --to 200 --dry-run` first, then omit `--dry-run` to persist. Both endpoints are inclusive. The contract must be configured in IndexerContractRegistry for the requested network; set the SOROBAN_TESTNET_*_CONTRACT_ID or SOROBAN_MAINNET_*_CONTRACT_ID variables and the corresponding SOROBAN_*_RPC_URL.
+
+The CLI uses the live indexer's reader and decoders and follows RPC cursors, including multiple pages within a single ledger. It leaves the live cursor untouched. Dry runs decode and count by event type without connecting to the database. The summary reports fetched, inserted, alreadyPresent, failed, skipped (unknown event types), and perType counts. Replaying a range is idempotent. Event failures produce a nonzero exit status; RPC errors abort the run. If the RPC has pruned the requested history, use an RPC provider retaining that range.

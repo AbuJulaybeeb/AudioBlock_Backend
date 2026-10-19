@@ -1,148 +1,140 @@
-/**
- * Tests for Reindex CLI (Issue #256)
- */
-
 import { reindexRange } from '../cli/reindex';
+import { SorobanEventReader } from '../services/Soroban/SorobanEventReader';
 import { IndexedEventService } from '../services/IndexedEventService';
-import AppDataSource from '../config/db';
+import db from '../config/db';
 
+jest.mock('../services/Soroban/SorobanEventReader');
 jest.mock('../services/IndexedEventService');
 jest.mock('../config/db', () => ({
   __esModule: true,
-  default: {
-    isInitialized: false,
-    initialize: jest.fn(),
-  },
+  default: { isInitialized: false, initialize: jest.fn(), destroy: jest.fn() },
 }));
 jest.mock('../config/logger', () => ({
-  info: jest.fn(),
-  error: jest.fn(),
-  warn: jest.fn(),
-  debug: jest.fn(),
+  __esModule: true,
+  default: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
 }));
+jest.mock('../config/soroban', () => ({
+  SorobanContracts: {
+    nft: 'C123',
+    artist: 'C234',
+    catalog: 'C345',
+    royalty: 'C456',
+    marketplace: 'C567',
+  },
+}));
+const options = { contract: 'C123', network: 'testnet', from: 10, to: 11 };
+const event = (id: string, ledger = 10) => ({
+  id,
+  ledger,
+  topic: ['mint'],
+  value: 42,
+  contractId: 'C123',
+  txHash: 'tx',
+});
+const fetchEvents = jest.mocked(SorobanEventReader.prototype.fetchEvents);
+const upsert = jest.mocked(IndexedEventService.prototype.upsertEvent);
 
-describe('Reindex CLI', () => {
-  let mockEventService: jest.Mocked<IndexedEventService>;
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mockEventService = new IndexedEventService() as jest.Mocked<IndexedEventService>;
+beforeEach(() => {
+  jest.clearAllMocks();
+  fetchEvents.mockReset();
+  fetchEvents.mockResolvedValue({ events: [], cursor: '', latestLedger: 20 });
+  upsert.mockImplementation(async (_dto, result) => {
+    result?.(true);
+    return {} as any;
   });
+});
 
-  describe('parameter validation', () => {
-    it('should reject negative start ledger', async () => {
-      await expect(
-        reindexRange({
-          contract: 'CXXX123',
-          network: 'mainnet',
-          from: -1,
-          to: 100,
-        })
-      ).rejects.toThrow('Start ledger (--from) must be >= 0');
-    });
-
-    it('should reject end ledger less than start ledger', async () => {
-      await expect(
-        reindexRange({
-          contract: 'CXXX123',
-          network: 'mainnet',
-          from: 1000,
-          to: 500,
-        })
-      ).rejects.toThrow('End ledger (--to) must be >= start ledger (--from)');
-    });
-
-    it('should accept valid ledger range', async () => {
-      // Mock empty event response
-      await expect(
-        reindexRange({
-          contract: 'CXXX123',
-          network: 'mainnet',
-          from: 100,
-          to: 200,
-        })
-      ).resolves.not.toThrow();
-    });
+it('pages by cursor without skipping events in the same or final ledger', async () => {
+  fetchEvents
+    .mockResolvedValueOnce({ events: [event('1')], cursor: 'a', latestLedger: 20 })
+    .mockResolvedValueOnce({ events: [event('2'), event('3', 11)], cursor: 'b', latestLedger: 20 })
+    .mockResolvedValueOnce({ events: [event('4', 12)], cursor: 'c', latestLedger: 20 });
+  const summary = await reindexRange(options);
+  expect(summary).toMatchObject({ fetched: 3, inserted: 3, failed: 0, perType: { mint: 3 } });
+  expect(fetchEvents).toHaveBeenNthCalledWith(1, {
+    contractIds: ['C123'],
+    startLedger: 10,
+    endLedger: 12,
+    limit: 200,
   });
-
-  describe('dry-run mode', () => {
-    it('should not call upsertEvent in dry-run mode', async () => {
-      await reindexRange({
-        contract: 'CXXX123',
-        network: 'mainnet',
-        from: 100,
-        to: 200,
-        dryRun: true,
-      });
-
-      expect(mockEventService.upsertEvent).not.toHaveBeenCalled();
-    });
-
-    it('should call upsertEvent when not in dry-run mode', async () => {
-      // Since our mock RPC client returns empty arrays, upsertEvent won't be called
-      // In a real scenario with events, it would be called
-      await reindexRange({
-        contract: 'CXXX123',
-        network: 'mainnet',
-        from: 100,
-        to: 200,
-        dryRun: false,
-      });
-
-      // With mock returning empty events, this should not be called
-      expect(mockEventService.upsertEvent).not.toHaveBeenCalled();
-    });
+  expect(fetchEvents).toHaveBeenNthCalledWith(2, {
+    contractIds: ['C123'],
+    cursor: 'a',
+    limit: 200,
   });
+  expect(upsert).toHaveBeenCalledTimes(3);
+  expect(db.destroy).toHaveBeenCalledTimes(1);
+});
 
-  describe('database initialization', () => {
-    it('should initialize database connection if not already initialized', async () => {
-      (AppDataSource as any).isInitialized = false;
-
-      await reindexRange({
-        contract: 'CXXX123',
-        network: 'mainnet',
-        from: 100,
-        to: 200,
-      });
-
-      expect(AppDataSource.initialize).toHaveBeenCalled();
-    });
-
-    it('should not reinitialize if database is already initialized', async () => {
-      (AppDataSource as any).isInitialized = true;
-
-      await reindexRange({
-        contract: 'CXXX123',
-        network: 'mainnet',
-        from: 100,
-        to: 200,
-      });
-
-      expect(AppDataSource.initialize).not.toHaveBeenCalled();
-    });
+it('reports duplicates on replay using the upsert outcome', async () => {
+  const seen = new Set();
+  upsert.mockImplementation(async (dto, result) => {
+    result?.(!seen.has(dto.eventId));
+    seen.add(dto.eventId);
+    return {} as any;
   });
+  fetchEvents.mockResolvedValue({ events: [event('1')], cursor: '', latestLedger: 20 });
+  expect(await reindexRange(options)).toMatchObject({ inserted: 1, alreadyPresent: 0 });
+  expect(await reindexRange(options)).toMatchObject({ inserted: 0, alreadyPresent: 1 });
+});
 
-  describe('batch processing', () => {
-    it('should process ledgers in batches', async () => {
-      // Test that a range of 250 ledgers is processed in multiple batches
-      await reindexRange({
-        contract: 'CXXX123',
-        network: 'mainnet',
-        from: 1000,
-        to: 1250,
-      });
-
-      // Verify processing completed without errors
-      expect(true).toBe(true);
-    });
+it('decodes and counts dry runs without opening the DB or writing', async () => {
+  fetchEvents.mockResolvedValue({ events: [event('1')], cursor: '', latestLedger: 20 });
+  expect(await reindexRange({ ...options, dryRun: true })).toMatchObject({
+    fetched: 1,
+    inserted: 0,
+    perType: { mint: 1 },
   });
+  expect(upsert).not.toHaveBeenCalled();
+  expect(db.initialize).not.toHaveBeenCalled();
+});
 
-  describe('safety guarantees', () => {
-    it('should not provide method to mutate live cursor', () => {
-      // The reindexRange function should not have access to IndexerService
-      // and should not update the production cursor
-      const hasIndexerService = reindexRange.toString().includes('IndexerService');
-      expect(hasIndexerService).toBe(false);
-    });
+it('counts failed writes and continues', async () => {
+  fetchEvents.mockResolvedValue({ events: [event('1'), event('2')], cursor: '', latestLedger: 20 });
+  upsert.mockRejectedValueOnce(new Error('DB failed'));
+  expect(await reindexRange(options)).toMatchObject({ failed: 1, inserted: 1 });
+});
+
+it('rejects stuck pagination', async () => {
+  fetchEvents.mockResolvedValue({ events: [event('1')], cursor: 'same', latestLedger: 20 });
+  await expect(reindexRange(options)).rejects.toThrow('cursor did not advance');
+});
+
+it.each([
+  { from: -1 },
+  { from: NaN },
+  { to: 9 },
+  { to: 10.5 },
+  { network: 'devnet' },
+  { contract: 'unknown' },
+])('rejects invalid arguments %j', async (invalid) => {
+  await expect(reindexRange({ ...options, ...invalid })).rejects.toThrow();
+  expect(fetchEvents).not.toHaveBeenCalled();
+});
+
+it('counts unknown decoded event types separately', async () => {
+  fetchEvents.mockResolvedValue({
+    events: [{ ...event('1'), topic: ['unknown'] }],
+    cursor: '',
+    latestLedger: 20,
   });
+  expect(await reindexRange({ ...options, dryRun: true })).toMatchObject({
+    fetched: 1,
+    skipped: 1,
+    perType: {},
+  });
+});
+it('closes an owned database connection after RPC failure', async () => {
+  fetchEvents.mockRejectedValue(new Error('RPC unavailable'));
+  await expect(reindexRange(options)).rejects.toThrow('RPC unavailable');
+  expect(db.destroy).toHaveBeenCalledTimes(1);
+});
+
+it('continues past an empty normalized page when its cursor advances', async () => {
+  fetchEvents
+    .mockResolvedValueOnce({ events: [], cursor: 'a', latestLedger: 20 })
+    .mockResolvedValueOnce({ events: [event('1')], cursor: 'b', latestLedger: 20 })
+    .mockResolvedValueOnce({ events: [], cursor: 'b', latestLedger: 20 });
+  expect(await reindexRange(options)).toMatchObject({ inserted: 1 });
+  expect(fetchEvents).toHaveBeenCalledTimes(3);
 });
