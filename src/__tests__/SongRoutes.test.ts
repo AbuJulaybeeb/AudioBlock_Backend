@@ -72,9 +72,6 @@ jest.mock('fluent-ffmpeg', () => {
 jest.mock('../services/CacheService', () => ({
   CacheService: { clearSong: jest.fn().mockResolvedValue(undefined) },
 }));
-jest.mock('../services/SearchIndexService', () => ({
-  SearchIndexService: { scheduleRemoval: jest.fn(), scheduleIndexUpdate: jest.fn() },
-}));
 jest.mock('../workers/precomputeManifest', () => ({ precomputeSignedManifest: jest.fn() }));
 jest.mock('../controllers/UploadController', () => ({
   UploadController: jest.fn(() => ({
@@ -359,6 +356,48 @@ describe('version history endpoints', () => {
     versionRepo.findAndCount.mockResolvedValue([[], 0]);
     const res = await request(app).get('/api/song/s1/versions').set('Authorization', admin);
     expect(res.status).toBe(200);
+  });
+
+  it('rejects a non-owner attempting to rollback a version with 403', async () => {
+    songRepo.findOneBy.mockResolvedValue(makeSong());
+    const res = await request(app)
+      .post('/api/song/s1/versions/1/rollback')
+      .set('Authorization', other)
+      .send({ changeNote: 'unauthorized rollback' });
+    expect(res.status).toBe(403);
+    expect(versionRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('lets the owning artist rollback to a prior version, creating a new active version', async () => {
+    const song = makeSong({ title: 'Current Title v2' });
+    songRepo.findOneBy.mockResolvedValue(song);
+    versionRepo.findOne
+      // getVersion fetches target version
+      .mockResolvedValueOnce({
+        versionNumber: 1,
+        title: 'Original Title v1',
+        description: 'Original Desc',
+        genre: 'afrobeats',
+        status: 'ready',
+      })
+      // getLatestVersionNumber
+      .mockResolvedValueOnce({ versionNumber: 2 });
+
+    const res = await request(app)
+      .post('/api/song/s1/versions/1/rollback')
+      .set('Authorization', owner)
+      .send({ changeNote: 'Reverting to v1' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.versionNumber).toBe(3);
+    expect(res.body.data.isActive).toBe(true);
+    expect(res.body.data.title).toBe('Original Title v1');
+    expect(versionRepo.update).toHaveBeenCalledWith(
+      { songId: 's1', isActive: true },
+      { isActive: false },
+    );
+    expect(songRepo.save).toHaveBeenCalled();
   });
 });
 

@@ -2,18 +2,19 @@ import 'reflect-metadata';
 import express from 'express';
 import request from 'supertest';
 
-jest.mock('../controllers/SongController', () => ({
-  SongController: {
+jest.mock('../controllers/SongController', () => {
+  const handlers: Record<string, any> = {
     getSong: (_req: any, res: any) => res.status(200).json({ handler: 'getSong' }),
     listSongs: (_req: any, res: any) => res.status(200).json({ handler: 'listSongs' }),
     getPopularSongs: (_req: any, res: any) => res.status(200).json({ handler: 'popular' }),
     streamSong: (_req: any, res: any) => res.status(200).json({ handler: 'stream' }),
-    prepareMint: jest.fn(),
-    submitMint: jest.fn(),
-    disputeSplit: jest.fn(),
-    resolveDispute: jest.fn(),
-  },
-}));
+  };
+  return {
+    SongController: new Proxy(handlers, {
+      get: (target, prop) => (prop in target ? target[prop as string] : jest.fn()),
+    }),
+  };
+});
 jest.mock('../controllers/EmbedController', () => ({
   EmbedController: {
     getSongEmbed: (_req: any, res: any) => res.status(200).json({ handler: 'embed' }),
@@ -29,6 +30,7 @@ jest.mock('../controllers/UploadController', () => ({
 }));
 jest.mock('../middlewares/authMiddleware', () => ({
   authArtistMiddleware: (_req: any, _res: any, next: any) => next(),
+  requireAuth: (_req: any, _res: any, next: any) => next(),
   optionalAuth: (_req: any, _res: any, next: any) => next(),
 }));
 jest.mock('../middlewares/idempotency', () => ({

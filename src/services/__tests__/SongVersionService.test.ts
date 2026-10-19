@@ -233,3 +233,74 @@ describe('SongVersionService.syncActiveVersion', () => {
     expect(mockVersionRepo.save).not.toHaveBeenCalled();
   });
 });
+
+describe('SongVersionService.rollbackVersion', () => {
+  it('creates a new version copying target version metadata and promotes it to active', async () => {
+    const song = makeSong({ title: 'Current Title v2' });
+    mockSongRepo.findOneBy.mockResolvedValue(song);
+    mockVersionRepo.findOne
+      // getVersion fetches target version
+      .mockResolvedValueOnce({
+        versionNumber: 1,
+        title: 'Original Title v1',
+        description: 'Original Desc',
+        genre: 'afrobeats',
+        composers: 'Original Composer',
+        coverArtPath: 'cover-v1.png',
+        s3OriginalUrl: 's3://v1.mp3',
+        hlsMasterUrl: 'https://cdn/v1/master.m3u8',
+        ipfsCid: 'cid-v1',
+        metadataCid: 'meta-v1',
+        duration: 180,
+        loudness: -14,
+        status: 'ready',
+      } as SongVersion)
+      // getLatestVersionNumber fetches latest version
+      .mockResolvedValueOnce({ versionNumber: 2 } as SongVersion);
+
+    const rolledBack = await new SongVersionService().rollbackVersion(
+      'song-1',
+      1,
+      'artist-1',
+      'Restoring original mix',
+    );
+
+    expect(rolledBack.versionNumber).toBe(3);
+    expect(rolledBack.isActive).toBe(true);
+    expect(rolledBack.title).toBe('Original Title v1');
+    expect(rolledBack.description).toBe('Original Desc');
+    expect(rolledBack.changeNote).toBe('Restoring original mix');
+    expect(rolledBack.status).toBe('ready');
+
+    // Demoted prior active versions
+    expect(mockVersionRepo.update).toHaveBeenCalledWith(
+      { songId: 'song-1', isActive: true },
+      { isActive: false },
+    );
+
+    // Parent song was updated with rolled-back fields
+    expect(mockSongRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Original Title v1',
+        description: 'Original Desc',
+        status: 'ready',
+      }),
+    );
+  });
+
+  it('rejects rollback by a non-owner with 403', async () => {
+    mockSongRepo.findOneBy.mockResolvedValue(makeSong({ artistId: 'owner-id' }));
+
+    await expect(
+      new SongVersionService().rollbackVersion('song-1', 1, 'intruder-id'),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it('rejects rollback for a non-existent song with 404', async () => {
+    mockSongRepo.findOneBy.mockResolvedValue(null);
+
+    await expect(
+      new SongVersionService().rollbackVersion('unknown-song', 1, 'artist-1'),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+});

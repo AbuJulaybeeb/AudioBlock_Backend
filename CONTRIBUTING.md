@@ -46,7 +46,11 @@ npm run dev
 Run the test suite before pushing:
 
 ```bash
+# Full test suite (CI default)
 npm test
+
+# Run only tests affected by changed files (fast local iteration)
+npm run test:changed
 ```
 
 ### Pre-commit Hooks

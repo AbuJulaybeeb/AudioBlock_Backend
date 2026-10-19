@@ -658,6 +658,7 @@ Additional in-repo docs live under [`docs/`](docs/):
 - [Deployment & Scaling Guide](docs/deployment-and-scaling.md) — expected
   CPU/memory sizing for the API and the ffmpeg-backed worker, how to measure
   it, and how to scale each process (Issue #405)
+- [Logging & Aggregation Guide](docs/logging-and-aggregation.md) — centralized log shipping to Grafana Loki via Promtail, LogQL queries, and sensitive data redaction (Issue #380)
 - [Architecture](docs/ARCHITECTURE.md) — high-level module layout
 - [AI Feature Set](docs/AI_FEATURES.md) — AI capabilities, what data is sent
   where, and the per-artist opt-in/opt-out story
@@ -698,18 +699,18 @@ This brings up the **minimal stack** (API `localhost:4000` + Postgres `5432` + R
 
 | Command                                             | What it starts                                                          |
 | --------------------------------------------------- | ----------------------------------------------------------------------- |
-| `docker compose up --build`                         | `backend` + `db` + `redis` (minimal, no profile)                        |
-| `docker compose --profile full up --build`          | Everything: minimal + `rabbitmq` + `pgadmin` + `prometheus` + `grafana` |
-| `docker compose --profile queue up --build`         | Minimal + `rabbitmq` (song-processing queue)                            |
-| `docker compose --profile tools up --build`         | Minimal + `pgadmin` (`localhost:5050`)                                  |
-| `docker compose --profile monitoring up --build`    | Minimal + `prometheus` (`9090`) + `grafana` (`3000`)                    |
-| `docker compose --profile observability up --build` | Same as `monitoring` (alias)                                            |
+| `docker compose up --build`                         | `backend` + `db` + `redis` (minimal, no profile)                                                |
+| `docker compose --profile full up --build`          | Everything: minimal + `rabbitmq` + `pgadmin` + `prometheus` + `grafana` + `loki` + `promtail`   |
+| `docker compose --profile queue up --build`         | Minimal + `rabbitmq` (song-processing queue)                                                    |
+| `docker compose --profile tools up --build`         | Minimal + `pgadmin` (`localhost:5050`)                                                          |
+| `docker compose --profile monitoring up --build`    | Minimal + `prometheus` (`9090`) + `grafana` (`3000`) + `loki` (`3100`) + `promtail`            |
+| `docker compose --profile observability up --build` | Same as `monitoring` (alias)                                                                    |
 
 `backend` no longer `depends_on: rabbitmq` — the API starts without a queue and connects to RabbitMQ lazily when it appears (see `src/index.ts`), so the minimal stack stays self-contained. Any combination of profiles can be stacked, e.g.:
 
 ```bash
 docker compose --profile queue --profile monitoring up --build
-# → backend + db + redis + rabbitmq + prometheus + grafana
+# → backend + db + redis + rabbitmq + prometheus + grafana + loki + promtail
 ```
 
 The full observability stack (`--profile full`) is unchanged from the pre-profile `docker compose up` topology and is what CI and `docker-compose.prod.yml` extend.
@@ -757,6 +758,7 @@ npm run dev
 | `npm run migration:run`                               | Applies pending migrations to the database                                                                                      |
 | `npm run migration:revert`                            | Reverts the last applied migration                                                                                              |
 | `npm test`                                            | Runs the full Jest suite (`src/__tests__/**/*.test.ts`)                                                                         |
+| `npm run test:changed`                                | Runs only tests affected by files changed since `main` (for fast local iteration; Issue #397)                                   |
 | `npm test -- src/__tests__/health.test.ts`            | Runs a single test file (swap in any path under `src/__tests__`)                                                                |
 | `npm run test:watch`                                  | Runs Jest in watch mode                                                                                                         |
 | `npm run dev:bootstrap`                               | Bootstraps Docker dependencies, runs migrations, seeds genres and test accounts (Issue #369)                                    |

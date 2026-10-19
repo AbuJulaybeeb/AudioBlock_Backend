@@ -12,6 +12,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest",
+    "test:changed": "jest --changedSince=main",
     "test:coverage": "jest --coverage",
     "test:integration": "jest --runInBand tests/integration/**/*.test.ts",
     "test:watch": "jest --watch",

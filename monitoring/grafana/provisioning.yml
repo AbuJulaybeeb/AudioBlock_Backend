@@ -14,6 +14,14 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
 
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    jsonData:
+      maxLines: 1000
+
 # Dashboard provider points at the version-controlled dashboards directory.
 providers:
   - name: "AudioBlock Backend"

@@ -3,7 +3,8 @@ import { UploadController } from '../controllers/UploadController';
 import { validateDTO } from '../middlewares/validate';
 import { FinalizeUploadDTO } from '../dtos/FinalizeUploadDTO';
 import { UploadChunkDTO } from '../dtos/UploadChunkDTO';
-import { authArtistMiddleware, requireAuth } from '../middlewares/authMiddleware';
+import { authArtistMiddleware, requireAuth, optionalAuth } from '../middlewares/authMiddleware';
+import { etagCache } from '../middlewares/etag';
 import multer from 'multer';
 import { CreateCoverDTO } from '../dtos/CreateCoverDTO';
 import fs from 'fs';
@@ -14,6 +15,9 @@ import { idempotency } from '../middlewares/idempotency';
 import { AddCollaboratorDTO } from '../dtos/AddCollaboratorDTO';
 import { UpdateCollaboratorDTO } from '../dtos/UpdateCollaboratorDTO';
 import { ApplyRoyaltyTemplateDTO } from '../dtos/ApplyRoyaltyTemplateDTO';
+import { reportRateLimiter } from '../middlewares/rateLimiter';
+import { ReportSongDTO } from '../dtos/ReportSongDTO';
+import { UpdateSongDTO } from '../dtos/UpdateSongDTO';
 
 const uploadController = new UploadController();
 const router = Router();
@@ -154,13 +158,54 @@ router.get('/:id', optionalAuth, etagCache({ visibility: 'no-cache' }), SongCont
 
 // Soroban on-chain song minting: the artist's wallet signs, the backend
 // only builds and relays the transaction.
-router.post('/:id/onchain/prepare-mint', authArtistMiddleware, idempotency(), SongController.prepareMint);
+router.post(
+  '/:id/onchain/prepare-mint',
+  authArtistMiddleware,
+  idempotency(),
+  SongController.prepareMint,
+);
 router.post(
   '/:id/onchain/submit-mint',
   authArtistMiddleware,
   idempotency(),
   validateDTO(SubmitSignedXdrDTO),
   SongController.submitMint,
+);
+
+// Edit or remove a song (owner or admin; enforced in SongService)
+router.patch('/:id', authArtistMiddleware, validateDTO(UpdateSongDTO), SongController.updateSong);
+router.delete('/:id', authArtistMiddleware, SongController.deleteSong);
+
+// Lyrics are public, but only served once the lyrics rights are confirmed
+router.get('/:id/lyrics', SongController.getLyrics);
+
+// Cover art: public read, owner-only replacement
+router.get('/:id/cover', SongController.getCoverArt);
+router.put(
+  '/:id/cover',
+  authArtistMiddleware,
+  coverReplaceUpload.single('cover'),
+  SongController.uploadCoverArt,
+);
+
+// Version history (owner or admin; enforced in SongController) (Issue #86)
+router.get('/:id/versions', requireAuth, SongController.listVersions);
+router.get('/:id/versions/:version', requireAuth, SongController.getVersion);
+
+// Version rollback (owner-only; creates a new version copying historical metadata, Issue #441)
+router.post(
+  '/:id/versions/:version/rollback',
+  authArtistMiddleware,
+  SongController.rollbackVersion,
+);
+
+// Content reports: one per user per song (a repeat returns 409), 10 per hour per user
+router.post(
+  '/:id/report',
+  requireAuth,
+  reportRateLimiter,
+  validateDTO(ReportSongDTO),
+  SongController.reportSong,
 );
 
 // Collaborator management (owner-only writes; credits are public to read)

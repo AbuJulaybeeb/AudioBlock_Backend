@@ -448,6 +448,25 @@ export class SongController {
     }
   };
 
+  /** POST /api/songs/:id/versions/:version/rollback — rollback to a prior version (Issue #441). */
+  static rollbackVersion = async (req: Request, res: Response) => {
+    try {
+      const songId = req.params.id as string;
+      const versionNumber = Number(req.params.version);
+      const artistId = req.user?.id as string;
+      const { changeNote } = req.body || {};
+      const newVersion = await songVersionService.rollbackVersion(
+        songId,
+        versionNumber,
+        artistId,
+        changeNote,
+      );
+      return res.status(201).json({ success: true, data: newVersion });
+    } catch (error) {
+      handleError(req, res, error);
+    }
+  };
+
   /** POST /api/songs/:id/report — submit a content report (Issue #88). */
   static reportSong = async (req: Request, res: Response) => {
     try {
